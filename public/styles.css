@@ -241,7 +241,8 @@ tr:hover td{background:var(--sky-pale);}
 /* ---------- Buttons row / toolbar ---------- */
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
 .search-box{position:relative;}
-.search-box input{padding-left:32px;min-width:200px;}
+.search-box input{padding:8px 10px 8px 32px;min-width:200px;border:1.5px solid var(--line);border-radius:8px;background:var(--cloud);color:var(--ink);outline:none;}
+.search-box input:focus{border-color:var(--sky-mid);}
 .search-box .ic{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--ink-soft);font-size:13px;}
 .select-sm{padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--cloud);color:var(--ink);}
 
@@ -331,3 +332,100 @@ tr:hover td{background:var(--sky-pale);}
 .badge.nonmonetized{background:var(--sky-pale);color:var(--sky-deep);}
 .directory-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;}
 .directory-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--cloud);}
+
+/* ---------- Layout polish: desktop + mobile ---------- */
+[data-link]{cursor:pointer;}
+[data-link]:hover{color:var(--sky-deep);}
+.content{margin:0 auto;}
+.drawer-close{display:none;margin-left:auto;font-size:16px;padding:6px 8px;border-radius:8px;color:var(--ink-soft);}
+.drawer-close:hover{background:var(--sky-pale);}
+.topbar-title{flex:1;min-width:0;text-align:center;font-weight:700;font-size:15.5px;font-family:"Outfit","Inter",sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 8px;}
+.topbar .avatar{width:32px;height:32px;font-size:12px;}
+.banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.stat-card{min-width:0;}
+.stat-card .value{overflow-wrap:anywhere;}
+.stat-card .value .pct-vs .assigned{font-size:13px;display:inline-block;}
+.card .scrollx{margin:0 -4px;padding:0 4px;}
+td[data-label=""] .btn + .btn{margin-left:4px;}
+
+/* Member dashboard: profile card beside the headline stats */
+.dash-hero{display:grid;grid-template-columns:minmax(240px,300px) 1fr;gap:14px;margin-bottom:22px;align-items:stretch;}
+.dash-hero .profile-card{margin-bottom:0;justify-content:center;}
+.dash-hero .hero-stats{margin-bottom:0;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));}
+.profile-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 20px;align-items:start;}
+.profile-links{flex-wrap:wrap;justify-content:center;}
+
+/* Tablet */
+@media (max-width:1024px){
+  .dash-hero{grid-template-columns:1fr;}
+  .content{padding:22px 22px 60px;}
+}
+
+/* Phone / small tablet: drawer navigation */
+@media (max-width:860px){
+  .topbar{gap:6px;padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top,0px));}
+  .burger{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;}
+  .burger:hover{background:var(--sky-pale);}
+  .mobile-nav-open .sidebar{inset:0 auto 0 0;width:min(290px,84vw);animation:drawerin .18s ease;}
+  .mobile-nav-open .drawer-close{display:inline-flex;}
+  .app-shell.mobile-nav-open{height:100vh;overflow:hidden;}
+  .nav-item{padding:12px;}
+  input,select,textarea,.field input,.field select{font-size:16px;} /* stops iOS zooming into inputs */
+}
+@keyframes drawerin{from{transform:translateX(-100%);}to{transform:translateX(0);}}
+
+/* Phone */
+@media (max-width:600px){
+  .content{padding:16px 14px 70px;padding-bottom:calc(70px + env(safe-area-inset-bottom,0px));}
+  .page-head{margin-bottom:16px;gap:12px;}
+  .page-head h1{font-size:20px;}
+  .page-head > .toolbar,.page-head > .btn{width:100%;}
+  .page-head > .btn{justify-content:center;width:100% !important;} /* overrides inline width:auto */
+  .page-head > .toolbar > .btn,.page-head > .toolbar > input{flex:1 1 auto;}
+  .grid-stats,.dash-hero .hero-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:16px;}
+  .stat-card{padding:14px;}
+  .stat-card .label{font-size:11.5px;margin-bottom:6px;}
+  .stat-card .value{font-size:21px;}
+  .card{padding:16px;margin-bottom:16px;}
+  .dash-hero{margin-bottom:16px;gap:10px;}
+  .profile-card{padding:22px 16px;}
+  .toolbar{gap:8px;}
+  .search-box{flex:1 1 100%;}
+  .search-box input{min-width:0;width:100%;}
+  .toolbar .select-sm{flex:1 1 auto;}
+
+  /* card-style tables: compact two-column cards, action buttons wrap neatly */
+  table.to-cards tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:4px;row-gap:2px;}
+  table.to-cards td:first-child,table.to-cards td[data-label=""],table.to-cards td[colspan]{grid-column:1 / -1;}
+  table.to-cards td[data-label=""]{display:flex;flex-wrap:wrap;gap:6px;padding-top:8px;}
+  table.to-cards td[data-label=""]:empty{display:none;}
+  table.to-cards td[data-label=""] .btn + .btn{margin-left:0;}
+  table.to-cards td[data-label=""] .btn{flex:1 1 auto;}
+  table.to-cards tr:hover td{background:transparent;}
+  th,td{padding:9px 8px;}
+
+  /* podium stays a 3-across row instead of wrapping awkwardly */
+  .podium{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-items:end;}
+  .podium-slot{min-width:0;padding:12px 6px;}
+  .podium-slot.p1{padding-top:18px;}
+  .podium-slot .rank-medal{font-size:20px;}
+  .podium-slot .pname{font-size:12.5px;overflow-wrap:anywhere;}
+  .podium-slot .pscore{font-size:16px;}
+  .podium-slot .psub{font-size:10.5px;}
+
+  /* modals become bottom sheets */
+  .overlay{align-items:flex-end;padding:0;}
+  .modal,.modal.wide{max-width:none;border-radius:var(--radius-lg) var(--radius-lg) 0 0;max-height:92vh;padding:22px 16px;padding-bottom:calc(22px + env(safe-area-inset-bottom,0px));}
+  .modal-actions{flex-direction:column-reverse;}
+  .modal-actions .btn{width:100%;}
+  .perm-grid{grid-template-columns:1fr;}
+
+  .toast-wrap{left:14px;right:14px;bottom:calc(16px + env(safe-area-inset-bottom,0px));}
+  .directory-grid{grid-template-columns:1fr;}
+  .login-card{padding:30px 22px 24px;}
+}
+
+/* Very narrow phones */
+@media (max-width:360px){
+  .grid-stats,.dash-hero .hero-stats{grid-template-columns:1fr;}
+}

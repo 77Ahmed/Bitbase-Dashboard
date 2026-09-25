@@ -585,15 +585,25 @@ app.post('/api/activity/import', requireAuth, (req, res) => {
 const PREMIUM_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 function payoutWithUser(p){
+  if(p.type === 'community') return Object.assign({}, p, { displayName: 'Community fund', username: '' });
   const u = getUser(p.userId);
   return Object.assign({}, p, { displayName: u?u.displayName:'(deleted member)', username: u?u.username:'' });
+}
+function payoutTargetName(p){
+  if(p.type === 'community') return 'Community fund';
+  const u = getUser(p.userId);
+  return u ? u.displayName : '(deleted member)';
 }
 
 app.get('/api/payouts', requireAuth, (req, res) => {
   const viewer = req.user;
   const communityTotal = payouts.reduce((s,p)=>s+(p.amount||0), 0);
   const premiumPayouts = payouts.filter(p=>p.type==='premium').sort((a,b)=> b.date < a.date ? -1 : 1);
-  const lastPremiumWinner = premiumPayouts.length ? payoutWithUser(premiumPayouts[0]) : null;
+  let lastPremiumWinner = premiumPayouts.length ? payoutWithUser(premiumPayouts[0]) : null;
+  // Members only ever see their own payout amounts — for someone else's win, just the name + date.
+  if(lastPremiumWinner && viewer.role==='member' && lastPremiumWinner.userId!==viewer.id){
+    lastPremiumWinner = { userId: lastPremiumWinner.userId, displayName: lastPremiumWinner.displayName, date: lastPremiumWinner.date };
+  }
 
   const mine = payouts.filter(p=>p.userId===viewer.id).sort((a,b)=> b.date < a.date ? -1 : 1);
   const myTotal = mine.reduce((s,p)=>s+(p.amount||0), 0);
@@ -619,6 +629,7 @@ app.post('/api/payouts', requireAuth, requireAdmin, (req, res) => {
   if(!target || target.role !== 'member'){ res.status(400).json({ error: 'Member not found.' }); return; }
   const payDate = date || dateStr(0);
   const payType = type || 'premium';
+  if(payType === 'community'){ res.status(400).json({ error: 'Use "Add Funds" for community fund entries.' }); return; }
   const payAmount = Number(amount) || 0;
 
   if(payType === 'premium' && !override){
@@ -641,6 +652,20 @@ app.post('/api/payouts', requireAuth, requireAdmin, (req, res) => {
   res.json({ payout: payoutWithUser(payout) });
 });
 
+// Manual top-up of the community total — not tied to any member, so it never shows
+// up in anyone's personal payout history, only in the community total.
+app.post('/api/funds', requireAuth, requireAdmin, (req, res) => {
+  const actor = req.user;
+  const { amount, note, date } = req.body || {};
+  const payAmount = Number(amount);
+  if(!payAmount || isNaN(payAmount)){ res.status(400).json({ error: 'Enter a non-zero amount.' }); return; }
+  const fund = { id: uid('pay'), userId: '', date: date || dateStr(0), amount: payAmount, monetized: true, type: 'community', note: note||'', awardedBy: actor.displayName, createdAt: Date.now() };
+  payouts.push(fund);
+  persistPayouts();
+  logAudit(actor.displayName, `Added $${payAmount} to community funds${note?` — ${note}`:''}`, '');
+  res.json({ payout: payoutWithUser(fund) });
+});
+
 app.put('/api/payouts/:id', requireAuth, requireAdmin, (req, res) => {
   const actor = req.user;
   const payout = payouts.find(p=>p.id===req.params.id);
@@ -649,12 +674,13 @@ app.put('/api/payouts/:id', requireAuth, requireAdmin, (req, res) => {
   const before = { amount: payout.amount, type: payout.type };
   if(amount !== undefined) payout.amount = Number(amount) || 0;
   if(monetized !== undefined) payout.monetized = !!monetized;
-  if(type !== undefined) payout.type = type || payout.type;
+  // A community-fund entry has no member, so it can't turn into a member payout (or vice versa).
+  if(type !== undefined && payout.type !== 'community' && type !== 'community') payout.type = type || payout.type;
   if(note !== undefined) payout.note = note;
   if(date !== undefined) payout.date = date;
   persistPayouts();
-  const target = getUser(payout.userId);
-  logAudit(actor.displayName, `Edited a payout for ${target?target.displayName:'(deleted member)'}: ${before.type} $${before.amount} \u2192 ${payout.type} $${payout.amount}`, target?target.displayName:'');
+  const targetName = payoutTargetName(payout);
+  logAudit(actor.displayName, `Edited a payout for ${targetName}: ${before.type} $${before.amount} \u2192 ${payout.type} $${payout.amount}`, targetName);
   res.json({ payout: payoutWithUser(payout) });
 });
 
@@ -662,10 +688,10 @@ app.delete('/api/payouts/:id', requireAuth, requireAdmin, (req, res) => {
   const actor = req.user;
   const payout = payouts.find(p=>p.id===req.params.id);
   if(!payout){ res.status(404).json({ error: 'Payout not found.' }); return; }
-  const target = getUser(payout.userId);
+  const targetName = payoutTargetName(payout);
   payouts = payouts.filter(p=>p.id!==req.params.id);
   persistPayouts();
-  logAudit(actor.displayName, `Deleted a payout (${payout.type}, $${payout.amount}) for ${target?target.displayName:'(deleted member)'}`, target?target.displayName:'');
+  logAudit(actor.displayName, `Deleted a payout (${payout.type}, $${payout.amount}) for ${targetName}`, targetName);
   res.json({ ok: true });
 });
 

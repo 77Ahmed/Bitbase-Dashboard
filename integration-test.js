@@ -435,18 +435,33 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(res.user.monetized !== false) throw new Error('new member should default monetized:false, got ' + res.user.monetized);
   });
 
-  // ---------- 19. Member detail is now open to any authenticated viewer ----------
-  await tryAsync('a member can open another member\u2019s detail page (community-wide read visibility)', async () => {
+  // ---------- 19. Members can only open their OWN detail page (weekly report + payouts) ----------
+  await tryAsync('a member cannot open another member\u2019s weekly report / payouts, but can open their own', async () => {
     await w.logout(); await wait(300);
     w.document.getElementById('loginUsername').value = 'lisa';
     w.document.getElementById('loginPassword').value = 'user123456';
     submit(w, 'loginUsername');
     await wait(400);
     const tanvirId = w.getUserByUsername('tanvir').id;
+    const lisaId = w.getUserByUsername('lisa').id;
     w.goto('memberDetail', {userId: tanvirId}); await wait(50);
-    const detailHtml = html(w);
-    if(detailHtml.includes("don't have access")) throw new Error('lisa should be able to view tanvir\'s detail page now');
-    if(!detailHtml.includes('Tanvir Shah')) throw new Error('expected tanvir\'s name on the detail page');
+    if(w.state.ui.view === 'memberDetail') throw new Error('goto should refuse to open tanvir\'s detail page for lisa');
+    // even forcing the view directly shows a lock, not tanvir's data
+    w.state.ui.view = 'memberDetail'; w.state.ui.params = { userId: tanvirId }; w.render(); await wait(50);
+    if(!html(w).includes('only view your own')) throw new Error('expected a lock message on tanvir\'s detail page');
+    if(html(w).includes('7-Day Breakdown')) throw new Error('tanvir\'s weekly breakdown should not render for lisa');
+    w.goto('memberDetail', {userId: lisaId}); await wait(50);
+    if(!html(w).includes('7-Day Breakdown')) throw new Error('lisa should still see her own detail page');
+    w.goto('directory'); await wait(50);
+    if(html(w).includes(`goto('memberDetail',{userId:'${tanvirId}'})`)) throw new Error('directory should not link lisa to tanvir\'s detail page');
+  });
+
+  await tryAsync('a member only receives their own payouts, and no amount for someone else\u2019s Premium win', async () => {
+    const lisaId = w.getUserByUsername('lisa').id;
+    await w.fetchPayouts();
+    const py = w.state.payouts;
+    if(py.scoped.some(p=>p.userId!==lisaId)) throw new Error('scoped payouts leaked another member\u2019s payout');
+    if(py.lastPremiumWinner && py.lastPremiumWinner.userId!==lisaId && py.lastPremiumWinner.amount!==undefined) throw new Error('last Premium amount leaked to a member');
   });
 
   // ---------- 20. Weekly activity = % of days target was met (7/7 = 100%) ----------
@@ -589,6 +604,40 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
       editBlocked = deleteBlocked = true; // nothing to test against, but don't fail the suite
     }
     if(!editBlocked || !deleteBlocked) throw new Error('moderator should not be able to edit/delete payouts');
+  });
+
+  // ---------- 23. Manual community funds ----------
+  await tryAsync('non-admin cannot add community funds', async () => {
+    let blocked = false;
+    try{ await w.apiSend('POST', '/funds', { amount: 50 }); } catch(err){ blocked = true; }
+    if(!blocked) throw new Error('moderator should not be able to add community funds');
+  });
+
+  await tryAsync('admin adds community funds via the real modal; total rises, no member gets it', async () => {
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'admin';
+    w.document.getElementById('loginPassword').value = 'admin123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    if(!html(w).includes('openFundModal()')) throw new Error('expected an Add Funds button on the admin dashboard');
+    const before = w.state.payouts.communityTotal;
+    w.openFundModal(); await wait(50);
+    w.document.getElementById('fundAmount').value = '120';
+    w.document.getElementById('fundNote').value = 'Sponsor';
+    submit(w, 'fundAmount');
+    await wait(400);
+    const after = w.state.payouts.communityTotal;
+    if(Math.abs(after - before - 120) > 0.001) throw new Error(`community total should rise by 120 (was ${before}, now ${after})`);
+    const entry = w.state.payouts.scoped.find(p=>p.type==='community' && p.note==='Sponsor');
+    if(!entry || entry.userId) throw new Error('expected a community fund entry with no member');
+    w.goto('payouts'); await wait(50);
+    if(!html(w).includes('Community fund')) throw new Error('fund entry should be listed on the Payouts page');
+  });
+
+  await tryAsync('the /api/payouts endpoint refuses a member payout typed "community"', async () => {
+    let blocked = false;
+    try{ await w.apiSend('POST', '/payouts', { userId: w.getUserByUsername('lisa').id, amount: 5, type: 'community' }); } catch(err){ blocked = true; }
+    if(!blocked) throw new Error('should have been rejected');
   });
 
   console.log(JSON.stringify(results, null, 2));
