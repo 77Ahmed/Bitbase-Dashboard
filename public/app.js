@@ -68,7 +68,8 @@ function pctVsAssignedHtml(actualPct, assignedPct){
 function coloredBarHtml(actualPct, assignedPct, width){
   const status = activityStatus(actualPct, assignedPct);
   const w = actualPct===null||actualPct===undefined ? 0 : actualPct;
-  return `<div class="pbar ${status||''}" style="display:inline-block;width:${width||80}px;vertical-align:middle;"><span style="width:${clamp(w,0,100)}%"></span></div>`;
+  const cssWidth = typeof width === 'string' ? width : (width||80) + 'px';
+  return `<div class="pbar ${status||''}" style="display:inline-block;width:${cssWidth};vertical-align:middle;"><span style="width:${clamp(w,0,100)}%"></span></div>`;
 }
 
 /* ---------------- API client (talks to the Node/CSV backend) ---------------- */
@@ -282,7 +283,22 @@ function openModal(html){
   el.innerHTML = `<div class="overlay" onmousedown="if(event.target===this) closeModal()">${html}</div>`;
 }
 
+// Members can only open their own detail page (weekly breakdown + payouts);
+// admins and moderators can open anyone's.
+function canViewMemberDetail(memberId){
+  const u = currentUser();
+  return !!u && (u.role !== 'member' || u.id === memberId);
+}
+// Attributes that make a member's name open their detail page — or nothing, if the viewer can't open it.
+function memberLinkAttrs(memberId){
+  return canViewMemberDetail(memberId) ? ` data-link onclick="goto('memberDetail',{userId:'${memberId}'})"` : '';
+}
+
 function goto(view, params){
+  if(view === 'memberDetail' && !canViewMemberDetail(params && params.userId)){
+    toast('You can only view your own weekly report and payouts.', true);
+    return;
+  }
   state.ui.view = view;
   state.ui.params = params || {};
   state.ui.mobileNavOpen = false;
@@ -356,7 +372,7 @@ function render(){
   root.innerHTML = `
     <div class="app-shell ${state.ui.mobileNavOpen?'mobile-nav-open':''}" onclick="if(state.ui.mobileNavOpen && !event.target.closest('.sidebar') && !event.target.closest('.burger')){ state.ui.mobileNavOpen=false; render(); }">
       <aside class="sidebar">
-        <div class="brand">Bitbase<span class="brand-tag">community</span></div>
+        <div class="brand">Bitbase<span class="brand-tag">community</span><button class="drawer-close" aria-label="Close menu" onclick="state.ui.mobileNavOpen=false; render();">✕</button></div>
         <nav>
           ${nav.map(n=>`<a class="nav-item ${n.v===activeView?'active':''}" onclick="goto('${n.v}')"><span class="ic">${n.i}</span>${n.l}</a>`).join('')}
         </nav>
@@ -370,8 +386,9 @@ function render(){
       </aside>
       <div class="main">
         <div class="topbar">
-          <div class="brand">Bitbase<span class="brand-tag">community</span></div>
-          <button class="burger" onclick="event.stopPropagation(); state.ui.mobileNavOpen=!state.ui.mobileNavOpen; render();">\u2630</button>
+          <button class="burger" aria-label="Open menu" onclick="event.stopPropagation(); state.ui.mobileNavOpen=!state.ui.mobileNavOpen; render();">\u2630</button>
+          <div class="topbar-title">${escapeHtml((nav.find(n=>n.v===activeView)||{l:activeView==='memberDetail'?'Member Details':'Bitbase'}).l)}</div>
+          <div class="avatar" title="${escapeHtml(u.displayName)}">${initials(u.displayName)}</div>
         </div>
         <div class="content">
           ${renderView(activeView, u)}
@@ -576,10 +593,10 @@ function renderRoleDashboard(u){
     <div class="grid-stats">${statCards}</div>
 
     <div class="grid-stats">
-      <div class="stat-card"><div class="label">Community Total Payout</div><div class="value blue">$${(py.communityTotal||0).toFixed(2)}</div></div>
+      ${communityTotalCardHtml(py, isAdmin)}
       <div class="stat-card">
         <div class="label">Last Premium Winner</div>
-        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;cursor:pointer;" onclick="goto('memberDetail',{userId:'${py.lastPremiumWinner.userId}'})">\ud83c\udf1f ${escapeHtml(py.lastPremiumWinner.displayName)}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
+        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;"${memberLinkAttrs(py.lastPremiumWinner.userId)}>\ud83c\udf1f ${escapeHtml(py.lastPremiumWinner.displayName)}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
       </div>
       ${isAdmin?`<div class="stat-card" style="display:flex;align-items:center;justify-content:center;"><button class="btn btn-primary" style="width:auto;" onclick="goto('leaderboard')">\ud83c\udf1f Award Weekly Premium</button></div>`:''}
     </div>
@@ -597,7 +614,7 @@ function renderRoleDashboard(u){
           const st = todayRec ? activityStatus(effectivePercentage(todayRec), r.user.assignedPercentage) : null;
           return `<tr>
           <td>${medalHtml(r.medal)} #${r.rank}</td>
-          <td><div class="cell-user" style="cursor:pointer" onclick="goto('memberDetail',{userId:'${r.userId}'})">${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
           <td>${fmtPct(r.weeklyPct)}</td>
           <td>${r.goldDays}</td>
         </tr>`;
@@ -614,13 +631,21 @@ function renderRoleDashboard(u){
   `;
 }
 
+function communityTotalCardHtml(py, canAddFunds){
+  return `<div class="stat-card">
+    <div class="label">Community Total Payout</div>
+    <div class="value blue">$${(py.communityTotal||0).toFixed(2)}</div>
+    ${canAddFunds?`<button class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="openFundModal()">+ Add Funds</button>`:''}
+  </div>`;
+}
+
 function payoutsCardHtml(title, total, recentList, opts){
   opts = opts || {};
   return `<div class="card"${opts.maxWidth?` style="max-width:${opts.maxWidth}px;"`:''}>
     <h3>${title}</h3>
     <div style="font-size:26px;font-weight:700;color:var(--sky-deep);margin-bottom:10px;">$${(total||0).toFixed(2)}</div>
     ${recentList && recentList.length ? recentList.map(p=>`<div class="payout-row">
-        <div><div style="font-weight:600;">${escapeHtml(p.type==='premium'?'\ud83c\udf1f Premium Award':p.type)}${opts.showWho?` \u2014 ${escapeHtml(p.displayName||'')}`:''}</div><div class="muted" style="font-size:11.5px;">${fmtDate(p.date)}${p.note?' \u00b7 '+escapeHtml(p.note):''}</div></div>
+        <div><div style="font-weight:600;">${payoutTypeLabel(p.type)}${opts.showWho?` \u2014 ${escapeHtml(p.displayName||'')}`:''}</div><div class="muted" style="font-size:11.5px;">${fmtDate(p.date)}${p.note?' \u00b7 '+escapeHtml(p.note):''}</div></div>
         <div style="text-align:right;"><div class="amt">$${(p.amount||0).toFixed(2)}</div><span class="badge ${p.monetized?'monetized':'nonmonetized'}" style="margin-top:4px;">${p.monetized?'Monetized':'Non-monetary'}</span></div>
       </div>`).join('') : `<div class="empty" style="padding:16px;">No payouts yet.</div>`}
   </div>`;
@@ -639,7 +664,8 @@ function renderMemberDashboard(u){
   return `
     <div class="page-head"><div><h1>Welcome, ${escapeHtml(u.displayName)} \ud83d\udc4b</h1><div class="sub">${fmtDate(today)}</div></div></div>
 
-    <div class="card profile-card" style="max-width:320px;">
+    <div class="dash-hero">
+    <div class="card profile-card">
       <div class="avatar">${initials(u.displayName)}</div>
       <div class="pname">${statusDot(status)}${escapeHtml(u.displayName)}${monetizedBadge(u.monetized)}</div>
       <div class="puser">@${escapeHtml(u.username)}</div>
@@ -649,10 +675,10 @@ function renderMemberDashboard(u){
       </div>
     </div>
 
-    <div class="grid-stats">
+    <div class="grid-stats hero-stats">
       <div class="stat-card">
         <div class="label">Today's Repost</div>
-        <div style="margin-top:8px;">${coloredBarHtml(todayPct, u.assignedPercentage, 140)}</div>
+        <div style="margin-top:8px;">${coloredBarHtml(todayPct, u.assignedPercentage, '100%')}</div>
         <div class="value blue" style="margin-top:8px;">${pctVsAssignedHtml(todayPct, u.assignedPercentage)}</div>
         <div class="muted" style="font-size:12.5px;">${rec?(rec.source==='csv'?'from today\u2019s CSV import':(rec.manualPercentage!==null?'set manually':'from today\u2019s posts')):'Not reported yet'}</div>
       </div>
@@ -668,13 +694,14 @@ function renderMemberDashboard(u){
         <div class="muted" style="font-size:12.5px;">out of ${scope.length} members</div>
       </div>
     </div>
+    </div>
 
     <div class="grid-stats">
-      <div class="stat-card"><div class="label">Community Total Payout</div><div class="value blue">$${(py.communityTotal||0).toFixed(2)}</div></div>
+      ${communityTotalCardHtml(py, false)}
       <div class="stat-card"><div class="label">My Total Payout</div><div class="value blue">$${(py.myTotal||0).toFixed(2)}</div></div>
       <div class="stat-card">
         <div class="label">Last Premium Winner</div>
-        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;cursor:pointer;" onclick="goto('memberDetail',{userId:'${py.lastPremiumWinner.userId}'})">\ud83c\udf1f ${escapeHtml(py.lastPremiumWinner.displayName)}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
+        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;"${memberLinkAttrs(py.lastPremiumWinner.userId)}>\ud83c\udf1f ${escapeHtml(py.lastPremiumWinner.displayName)}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
       </div>
     </div>
 
@@ -697,7 +724,8 @@ function renderMemberProfile(u){
   const py = state.payouts;
   return `
     <div class="page-head"><div><h1>My Profile</h1><div class="sub">Your account details</div></div></div>
-    <div class="card profile-card" style="max-width:340px;">
+    <div class="profile-grid">
+    <div class="card profile-card">
       <div class="avatar">${initials(u.displayName)}</div>
       <div class="pname">${escapeHtml(u.displayName)}</div>
       <div class="puser">@${escapeHtml(u.username)}</div>
@@ -706,7 +734,7 @@ function renderMemberProfile(u){
         <a class="link-btn ${u.whatsapp?'':'off'}" ${u.whatsapp?`href="https://wa.me/${u.whatsapp.replace(/\D/g,'')}" target="_blank"`:''}>\ud83d\udcac WhatsApp</a>
       </div>
     </div>
-    <div class="card" style="max-width:340px;">
+    <div class="card">
       <h3>Details</h3>
       <div style="font-size:13.5px;line-height:2;">
         <div><span class="muted">Moderator:</span> ${u.moderatorId?escapeHtml(getUser(u.moderatorId).displayName):'\u2014'}</div>
@@ -714,7 +742,8 @@ function renderMemberProfile(u){
         <div><span class="muted">Status:</span> <span class="badge ${u.status}">${u.status}</span></div>
       </div>
     </div>
-    ${payoutsCardHtml('My Payouts', py.myTotal, py.myRecent, {maxWidth:340})}
+    ${payoutsCardHtml('My Payouts', py.myTotal, py.myRecent)}
+    </div>
   `;
 }
 
@@ -795,7 +824,7 @@ function membersTableHtml(list, isAdmin, canEdit, canRemove, today, editScopeSet
       const rowCanEdit = canEdit && inEditScope;
       const rowCanRemove = canRemove && inEditScope;
       return `<tr>
-        <td data-label="Member"><div class="cell-user" style="cursor:pointer;" onclick="goto('memberDetail',{userId:'${m.id}'})"><div class="mini-avatar">${initials(m.displayName)}</div><div><div style="font-weight:600;">${escapeHtml(m.displayName)}${monetizedBadge(m.monetized)}</div><div class="muted" style="font-size:11.5px;">@${escapeHtml(m.username)}</div></div></div></td>
+        <td data-label="Member"><div class="cell-user"${memberLinkAttrs(m.id)}><div class="mini-avatar">${initials(m.displayName)}</div><div><div style="font-weight:600;">${escapeHtml(m.displayName)}${monetizedBadge(m.monetized)}</div><div class="muted" style="font-size:11.5px;">@${escapeHtml(m.username)}</div></div></div></td>
         <td data-label="Links">
           <a class="linkicon ${m.xUsername?'':'off'}" ${m.xUsername?`href="https://x.com/${encodeURIComponent(m.xUsername)}" target="_blank" onclick="event.stopPropagation()"`:''} title="X profile">\ud835\udd4a</a>
           <a class="linkicon ${m.whatsapp?'':'off'}" ${m.whatsapp?`href="https://wa.me/${m.whatsapp.replace(/\D/g,'')}" target="_blank" onclick="event.stopPropagation()"`:''} title="WhatsApp">\ud83d\udcac</a>
@@ -1162,7 +1191,7 @@ function renderDailyReports(u){
         const rowCanEdit = canEdit && editScopeSet.has(r.userId);
         return `<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
-          <td data-label="Member"><div class="cell-user" style="cursor:pointer" onclick="goto('memberDetail',{userId:'${r.userId}'})">${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
           <td data-label="Today's Repost">${coloredBarHtml(r.pct, r.user.assignedPercentage)} ${pctVsAssignedHtml(r.pct, r.user.assignedPercentage)} ${activitySourceTag(rec)}</td>
           <td data-label="Source"><span class="badge role">${rec.source}</span></td>
           <td data-label="">${rowCanEdit?`<button class="btn btn-outline btn-sm" onclick="openAddDailyModal('${date}','${r.userId}')">Edit</button>`:''}</td>
@@ -1466,7 +1495,7 @@ function renderWeeklyReports(u){
       ${rows.map(r=>{
         const st = activityStatus(r.todayPct, r.m.assignedPercentage);
         return `<tr>
-        <td data-label="Member"><div class="cell-user" style="cursor:pointer" onclick="goto('memberDetail',{userId:'${r.m.id}'})">${statusDot(st)}<div class="mini-avatar">${initials(r.m.displayName)}</div>${escapeHtml(r.m.displayName)}${monetizedBadge(r.m.monetized)}</div></td>
+        <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.m.id)}>${statusDot(st)}<div class="mini-avatar">${initials(r.m.displayName)}</div>${escapeHtml(r.m.displayName)}${monetizedBadge(r.m.monetized)}</div></td>
         <td data-label="Today">${pctVsAssignedHtml(r.todayPct, r.m.assignedPercentage)}</td>
         <td data-label="Weekly"><div class="pbar" style="display:inline-block;width:80px;vertical-align:middle;"><span style="width:${r.ws.weeklyPct}%"></span></div> ${fmtPct(r.ws.weeklyPct)}</td>
         <td data-label=""><button class="btn btn-outline btn-sm" onclick="goto('memberDetail',{userId:'${r.m.id}'})">View \u2192</button></td>
@@ -1479,6 +1508,9 @@ function renderWeeklyReports(u){
 }
 
 function renderMemberDetail(u, memberId){
+  if(!canViewMemberDetail(memberId)){
+    return `<div class="empty"><div class="big">🔒</div>You can only view your own weekly report and payouts.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="goto('weekly')">Go to my weekly activity</button></div>`;
+  }
   const m = getUser(memberId);
   if(!m || m.role !== 'member'){
     return `<div class="empty"><div class="big">\ud83d\udd12</div>That member could not be found.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="goto('directory')">\u2190 Back</button></div>`;
@@ -1556,10 +1588,10 @@ function renderLeaderboard(u){
       </div>
     </div>
 
-    ${py.lastPremiumWinner?`<div class="card" style="display:flex;align-items:center;gap:12px;">
+    ${py.lastPremiumWinner?`<div class="card banner">
       <div style="font-size:22px;">\ud83c\udf1f</div>
-      <div style="flex:1;"><b>${escapeHtml(py.lastPremiumWinner.displayName)}</b> won the last Premium award (${fmtDate(py.lastPremiumWinner.date)}, $${(py.lastPremiumWinner.amount||0).toFixed(2)})</div>
-      <button class="btn btn-outline btn-sm" onclick="goto('memberDetail',{userId:'${py.lastPremiumWinner.userId}'})">View \u2192</button>
+      <div style="flex:1;min-width:0;"><b>${escapeHtml(py.lastPremiumWinner.displayName)}</b> won the last Premium award (${fmtDate(py.lastPremiumWinner.date)}${py.lastPremiumWinner.amount!==undefined?`, $${(py.lastPremiumWinner.amount||0).toFixed(2)}`:''})</div>
+      ${canViewMemberDetail(py.lastPremiumWinner.userId)?`<button class="btn btn-outline btn-sm" onclick="goto('memberDetail',{userId:'${py.lastPremiumWinner.userId}'})">View \u2192</button>`:''}
     </div>`:''}
 
     <div class="podium">
@@ -1573,11 +1605,11 @@ function renderLeaderboard(u){
       <div class="scrollx"><table class="to-cards"><thead><tr><th>Rank</th><th>Member</th>${mode==='daily'?'<th>Today\'s Repost</th>':'<th>Gold</th><th>Silver</th><th>Bronze</th><th>Points</th><th>Weekly %</th>'}</tr></thead><tbody>
       ${rows.map(r=>mode==='daily'?`<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
-          <td data-label="Member"><div class="cell-user" style="cursor:pointer" onclick="goto('memberDetail',{userId:'${r.userId}'})">${statusDot(rowStatus(r))}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(rowStatus(r))}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
           <td data-label="Today's Repost">${pctVsAssignedHtml(r.pct, r.user.assignedPercentage)}</td>
         </tr>`:`<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
-          <td data-label="Member"><div class="cell-user" style="cursor:pointer" onclick="goto('memberDetail',{userId:'${r.userId}'})">${statusDot(rowStatus(r))}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(rowStatus(r))}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
           <td data-label="Gold">\ud83e\udd47 ${r.goldDays}</td>
           <td data-label="Silver">\ud83e\udd48 ${r.silverDays}</td>
           <td data-label="Bronze">\ud83e\udd49 ${r.bronzeDays}</td>
@@ -1599,7 +1631,7 @@ function renderDirectory(u){
         ${state.directory.map(d=>`<div class="directory-item">
           <div class="mini-avatar">${initials(d.displayName)}</div>
           <div style="flex:1;min-width:0;">
-            <div style="font-weight:600;font-size:13.5px;cursor:pointer;" onclick="goto('memberDetail',{userId:'${d.id}'})">${escapeHtml(d.displayName)}${monetizedBadge(d.monetized)}</div>
+            <div style="font-weight:600;font-size:13.5px;"${memberLinkAttrs(d.id)}>${escapeHtml(d.displayName)}${monetizedBadge(d.monetized)}</div>
             <div class="muted" style="font-size:11.5px;">@${escapeHtml(d.username)}</div>
           </div>
           <a class="linkicon ${d.xUsername?'':'off'}" ${d.xUsername?`href="https://x.com/${encodeURIComponent(d.xUsername)}" target="_blank"`:''} title="X profile">\ud835\udd4a</a>
@@ -1689,6 +1721,55 @@ async function submitPayout(e, payoutId, override){
 
 function openAwardPremiumModal(){ openPayoutModal({ presetType:'premium' }); }
 
+function payoutTypeLabel(type){
+  if(type === 'community') return '🏦 Community Fund';
+  return PAYOUT_TYPES[type] || escapeHtml(type);
+}
+
+/* ---- Manual top-up of the community total (not tied to any member) ---- */
+function openFundModal(opts){
+  opts = opts || {};
+  const editing = opts.editingPayoutId ? (state.payouts.scoped || []).find(p=>p.id===opts.editingPayoutId) : null;
+  openModal(`
+    <div class="modal">
+      <h2>${editing?'Edit Community Fund Entry':'Add to Community Funds'}</h2>
+      <p class="muted" style="font-size:13px;margin-bottom:16px;">Adds straight to the Community Total — it isn't tied to any member and won't show in anyone's personal payouts.</p>
+      <form onsubmit="return submitFund(event${editing?`,'${editing.id}'`:''})">
+        <div class="field-row">
+          <div class="field"><label>Amount ($, negative to correct down)</label><input id="fundAmount" type="number" step="0.01" required value="${editing?editing.amount:''}" placeholder="e.g. 100" /></div>
+          <div class="field"><label>Date</label><input id="fundDate" type="date" value="${editing?editing.date:dateStr(0)}" max="${dateStr(0)}" /></div>
+        </div>
+        <div class="field"><label>Note (optional)</label><input id="fundNote" placeholder="e.g. Sponsor contribution" value="${editing?escapeHtml(editing.note||''):''}" /></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" style="width:auto;">${editing?'Save changes':'Add Funds'}</button>
+        </div>
+      </form>
+    </div>
+  `);
+}
+
+async function submitFund(e, payoutId){
+  e.preventDefault();
+  const amount = Number(document.getElementById('fundAmount').value);
+  const date = document.getElementById('fundDate').value;
+  const note = document.getElementById('fundNote').value.trim();
+  if(!amount){ toast('Enter a non-zero amount.', true); return false; }
+  try{
+    if(payoutId){
+      await apiSend('PUT', '/payouts/'+payoutId, { amount, note, date });
+      toast('Community fund entry updated.');
+    }else{
+      await apiSend('POST', '/funds', { amount, note, date });
+      toast(`$${amount.toFixed(2)} added to community funds.`);
+    }
+    closeModal();
+    await fetchState();
+    render();
+  }catch(err){ toast(err.message, true); }
+  return false;
+}
+
 async function deletePayout(e, payoutId){
   const btn = e.currentTarget;
   requireConfirm(btn, 'Delete', async () => {
@@ -1710,14 +1791,15 @@ function renderPayoutsPage(u){
       <div><h1>\ud83d\udcb0 Payouts</h1><div class="sub">Community total, per-member history, and awards \u2014 everything here is admin-managed</div></div>
       <div class="toolbar">
         <button class="btn btn-outline btn-sm" style="width:auto;" onclick="openAwardPremiumModal()">\ud83c\udf1f Award Weekly Premium</button>
+        <button class="btn btn-outline btn-sm" style="width:auto;" onclick="openFundModal()">+ Add Funds</button>
         <button class="btn btn-primary btn-sm" style="width:auto;" onclick="openPayoutModal()">+ Add Payout</button>
       </div>
     </div>
     <div class="grid-stats">
-      <div class="stat-card"><div class="label">Community Total Payout</div><div class="value blue">$${(py.communityTotal||0).toFixed(2)}</div></div>
+      ${communityTotalCardHtml(py, false)}
       <div class="stat-card">
         <div class="label">Last Premium Winner</div>
-        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;cursor:pointer;" onclick="goto('memberDetail',{userId:'${py.lastPremiumWinner.userId}'})">\ud83c\udf1f ${escapeHtml(py.lastPremiumWinner.displayName)}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
+        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;"${memberLinkAttrs(py.lastPremiumWinner.userId)}>\ud83c\udf1f ${escapeHtml(py.lastPremiumWinner.displayName)}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
       </div>
       <div class="stat-card"><div class="label">Total Records</div><div class="value">${list.length}</div></div>
     </div>
@@ -1726,12 +1808,12 @@ function renderPayoutsPage(u){
       <div class="scrollx"><table class="to-cards"><thead><tr><th>Date</th><th>Member</th><th>Type</th><th>Amount</th><th>Note</th><th></th></tr></thead><tbody>
       ${list.map(p=>`<tr>
         <td data-label="Date">${fmtDate(p.date)}</td>
-        <td data-label="Member" style="cursor:pointer;" onclick="goto('memberDetail',{userId:'${p.userId}'})">${escapeHtml(p.displayName)}</td>
-        <td data-label="Type">${PAYOUT_TYPES[p.type]||escapeHtml(p.type)}</td>
+        <td data-label="Member"${p.type==='community'?'':memberLinkAttrs(p.userId)}>${escapeHtml(p.displayName)}</td>
+        <td data-label="Type">${payoutTypeLabel(p.type)}</td>
         <td data-label="Amount"><span class="amt">$${(p.amount||0).toFixed(2)}</span> <span class="badge ${p.monetized?'monetized':'nonmonetized'}">${p.monetized?'Monetized':'Non-monetary'}</span></td>
         <td data-label="Note">${escapeHtml(p.note||'')}</td>
         <td data-label="">
-          <button class="btn btn-outline btn-sm" onclick="openPayoutModal({editingPayoutId:'${p.id}'})">Edit</button>
+          <button class="btn btn-outline btn-sm" onclick="${p.type==='community'?'openFundModal':'openPayoutModal'}({editingPayoutId:'${p.id}'})">Edit</button>
           <button class="btn btn-outline btn-sm" onclick="deletePayout(event,'${p.id}')">Delete</button>
         </td>
       </tr>`).join('')}
