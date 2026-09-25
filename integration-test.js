@@ -375,21 +375,25 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(!dailyHtml.includes('Tanvir Shah')) throw new Error("john should ALSO see tanvir (admin's member) on Daily Reports");
   });
 
-  await tryAsync('moderator (john) only gets an Edit button for his OWN members, not others, on Daily Reports', async () => {
+  await tryAsync('moderator (john) cannot set activity: no Add/Edit on Daily Reports, no Set Activity on Members, API blocked', async () => {
     w.goto('daily'); await wait(50);
-    const editScope = w.scopeForCurrentUser();
-    const lisaId = w.getUserByUsername('lisa').id;
-    const tanvirId = w.getUserByUsername('tanvir').id; // unassigned — never belonged to john
-    if(!editScope.includes(lisaId)) throw new Error('sanity check failed: lisa should be in johns edit scope');
-    if(editScope.includes(tanvirId)) throw new Error('sanity check failed: tanvir (unassigned) should NOT be in johns edit scope');
-    // openAddDailyModal's member dropdown is built strictly from scopeForCurrentUser(), so
-    // tanvir (out of scope) must not appear as an option even though he's visible in the table.
-    w.openAddDailyModal(w.dateStr(0));
-    await wait(50);
-    const options = Array.from(w.document.querySelectorAll('#dmMember option')).map(o=>o.value);
-    if(options.includes(tanvirId)) throw new Error("john's Add Daily Report member dropdown should not include tanvir");
-    if(!options.includes(lisaId)) throw new Error("john's Add Daily Report member dropdown should include lisa");
-    w.closeModal();
+    const dailyHtml = html(w);
+    if(dailyHtml.includes('openAddDailyModal')) throw new Error('john should not get Add/Edit buttons on Daily Reports');
+    if(!dailyHtml.includes('Total Posts') || !dailyHtml.includes("Member's Posts")) throw new Error('Daily Reports should show Total Posts and Member’s Posts columns');
+    if(/<th>Source<\/th>/.test(dailyHtml)) throw new Error('Source column should be gone');
+    w.goto('members'); await wait(50);
+    if(html(w).includes('openSetPercentModal')) throw new Error('john should not get a Set Activity button on Members');
+    let blocked = false;
+    try{ await w.apiSend('POST', '/activity', { userId: w.getUserByUsername('lisa').id, date: w.dateStr(0), posts: 5 }); } catch(err){ blocked = true; }
+    if(!blocked) throw new Error('server should refuse activity writes from a moderator');
+  });
+
+  await tryAsync('moderator (john) has no CSV import access: no Imports menu, both import APIs blocked', async () => {
+    if(w.document.querySelector('.nav-item[onclick*="\'imports\'"]')) throw new Error('john should not have an Imports menu item');
+    let dailyBlocked = false, membersBlocked = false;
+    try{ await w.apiSend('POST', '/activity/import', { csvText: 'username,repost_percentage\nlisa,50', date: w.dateStr(0), confirm: false }); } catch(err){ dailyBlocked = true; }
+    try{ await w.apiSend('POST', '/users/import', { csvText: 'username,display_name\nnewbie,Newbie', confirm: false }); } catch(err){ membersBlocked = true; }
+    if(!dailyBlocked || !membersBlocked) throw new Error('server should refuse CSV imports from a moderator');
   });
 
   await tryAsync('member (lisa) can open Daily Reports (read-only) and see other members\u2019 data', async () => {
@@ -638,6 +642,44 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     let blocked = false;
     try{ await w.apiSend('POST', '/payouts', { userId: w.getUserByUsername('lisa').id, amount: 5, type: 'community' }); } catch(err){ blocked = true; }
     if(!blocked) throw new Error('should have been rejected');
+  });
+
+  // ---------- 24. Leaderboard is community-wide, weekly = accumulated daily medals ----------
+  await tryAsync('weekly medal table ranks by Gold, then Silver, then Bronze', async () => {
+    const rows = w.weeklyLeaderboard(w.allMembers().filter(m=>m.status==='active').map(m=>m.id));
+    for(let i=1;i<rows.length;i++){
+      const a = rows[i-1], b = rows[i];
+      const key = r => [r.goldDays, r.silverDays, r.bronzeDays];
+      const [ag,as,ab] = key(a), [bg,bs,bb] = key(b);
+      const ok = ag>bg || (ag===bg && (as>bs || (as===bs && ab>=bb)));
+      if(!ok) throw new Error(`${a.user.displayName} ranked above ${b.user.displayName} with fewer medals`);
+    }
+    const totalGold = rows.reduce((s,r)=>s+r.goldDays,0);
+    if(totalGold < 1) throw new Error('expected at least one gold day this week in the test data');
+  });
+
+  await tryAsync('a member sees the whole community on the leaderboard (daily + weekly), not just herself', async () => {
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'lisa';
+    w.document.getElementById('loginPassword').value = 'user123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    w.state.ui.params.lbMode = 'weekly'; w.goto('leaderboard'); await wait(50);
+    if(!html(w).includes('Tanvir Shah') || !html(w).includes('Perfect Week')) throw new Error('weekly leaderboard should list other members for lisa');
+    if(!html(w).includes('medal-tally')) throw new Error('expected medal tallies on the weekly leaderboard');
+    w.state.ui.params.lbMode = 'daily'; w.render(); await wait(50);
+    if(!html(w).includes('Perfect Week')) throw new Error('daily leaderboard should list other members for lisa');
+    if(!html(w).includes('This Week')) throw new Error('daily leaderboard should also show the weekly medal tally');
+  });
+
+  await tryAsync('a moderator sees the whole community on the leaderboard, not just his own members', async () => {
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'john';
+    w.document.getElementById('loginPassword').value = 'mod123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    w.state.ui.params.lbMode = 'weekly'; w.goto('leaderboard'); await wait(50);
+    if(!html(w).includes('Perfect Week') || !html(w).includes('Tanvir Shah')) throw new Error('john should see members outside his group on the leaderboard');
   });
 
   console.log(JSON.stringify(results, null, 2));

@@ -429,3 +429,62 @@ td[data-label=""] .btn + .btn{margin-left:4px;}
 @media (max-width:360px){
   .grid-stats,.dash-hero .hero-stats{grid-template-columns:1fr;}
 }
+
+/* Leaderboard medal tally: 🥇2 🥈1 🥉0 */
+.medal-tally{display:inline-flex;gap:8px;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:600;}
+.podium-slot .pscore .medal-tally{font-size:15px;gap:6px;}
+.podium-slot .psub .medal-tally{font-size:inherit;font-weight:500;gap:4px;}
+@media (max-width:600px){
+  .podium-slot .pscore .medal-tally{font-size:12px;gap:3px;flex-wrap:wrap;justify-content:center;}
+  .podium-slot .psub .medal-tally{display:flex;justify-content:center;flex-wrap:wrap;margin-top:2px;}
+}
+@media (max-width:600px){
+  /* Leaderboard cards: rank + name on one line, medals side by side underneath */
+  table.lb-table tr{grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;}
+  table.lb-table td:first-child{grid-column:auto;font-weight:700;}
+  table.lb-table td[data-label="Member"]{grid-column:span 2;}
+  table.lb-table td[data-label="Rank"]::before,table.lb-table td[data-label="Member"]::before{display:none;}
+  table.lb-table td[data-label="Today's Repost"]{grid-column:1 / -1;}
+  table.lb-table td[data-label="Member's Posts"]{grid-column:span 2;}
+  table.lb-table td[data-label="Weekly %"]{grid-column:span 2;}
+}
+
+/* ---------- Podium: real podium shape (1st tallest in the middle), same layout in every slot ---------- */
+.podium{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:end;}
+.podium-slot{
+  min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+  padding:16px 12px 18px;border-bottom-width:5px;border-radius:var(--radius-md) var(--radius-md) 8px 8px;
+}
+.podium-slot.p1{min-height:230px;border-color:var(--gold);padding-top:16px;}
+.podium-slot.p2{min-height:200px;border-bottom-color:var(--silver);}
+.podium-slot.p3{min-height:185px;border-bottom-color:var(--bronze);}
+.podium-slot .rank-medal{line-height:1;margin-bottom:8px;}
+.podium-avatar{width:44px;height:44px;border-radius:50%;background:var(--sky-soft);color:#fff;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;flex-shrink:0;}
+.podium-slot.p1 .podium-avatar{width:54px;height:54px;font-size:18px;box-shadow:0 0 0 3px var(--gold-bg);}
+.podium-avatar.empty-avatar{background:var(--line);color:var(--ink-soft);}
+.podium-slot .pname{display:flex;align-items:center;justify-content:center;max-width:100%;min-width:0;}
+.podium-slot .pname .pn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+.podium-slot .pname .status-dot{margin-right:5px;}
+.podium-slot .pname .monetized-dot{margin-left:5px;}
+.podium-slot .pscore,.podium-slot .psub,.podium-slot .ptally{white-space:nowrap;}
+.podium-slot .ptally{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+.podium-slot .ptally .medal-tally{font-weight:500;gap:5px;}
+
+@media (max-width:600px){
+  .podium{gap:8px;}
+  .podium-slot{padding:12px 6px 14px;}
+  .podium-slot.p1{min-height:188px;padding-top:12px;}
+  .podium-slot.p2{min-height:164px;}
+  .podium-slot.p3{min-height:150px;}
+  .podium-slot .rank-medal{font-size:20px;margin-bottom:6px;}
+  .podium-avatar{width:34px;height:34px;font-size:12.5px;margin-bottom:6px;}
+  .podium-slot.p1 .podium-avatar{width:42px;height:42px;font-size:15px;}
+  .podium-slot .pname{font-size:12.5px;overflow-wrap:normal;}
+  .podium-slot .pname .status-dot{width:7px;height:7px;margin-right:3px;}
+  .podium-slot .pname .monetized-dot{width:7px;height:7px;margin-left:3px;}
+  .podium-slot .pscore{font-size:16px;}
+  .podium-slot .pscore .medal-tally{font-size:11.5px;gap:3px;flex-wrap:nowrap;}
+  .podium-slot .psub{font-size:10px;}
+  .podium-slot .ptally{font-size:10px;}
+  .podium-slot .ptally .medal-tally{gap:2px;}
+}

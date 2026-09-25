@@ -252,11 +252,12 @@ function weeklyLeaderboard(scopeIds, endOffset){
   });
   const rows = ids.map(id => {
     const u = getUser(id);
-    if(!u) return null;
+    if(!u || u.status !== 'active') return null;
     const ws = weeklyStats(id, endOffset);
     return { userId:id, user:u, points: points[id].points, goldDays: points[id].goldDays, silverDays: points[id].silverDays, bronzeDays: points[id].bronzeDays, weeklyPct: ws.weeklyPct };
   }).filter(Boolean);
-  rows.sort((a,b)=> b.points - a.points || b.weeklyPct - a.weeklyPct || a.user.displayName.localeCompare(b.user.displayName));
+  // Medal-table order: most gold days wins; ties go to more silver, then more bronze, then weekly %.
+  rows.sort((a,b)=> b.goldDays - a.goldDays || b.silverDays - a.silverDays || b.bronzeDays - a.bronzeDays || b.weeklyPct - a.weeklyPct || a.user.displayName.localeCompare(b.user.displayName));
   rows.forEach((r,i)=>{ r.rank = i+1; r.medal = i===0?'gold':i===1?'silver':i===2?'bronze':null; });
   return rows;
 }
@@ -337,7 +338,6 @@ function navFor(role){
     {v:'members', l:'My Members', i:'\ud83d\udc65'},
     {v:'daily', l:'Daily Reports', i:'\ud83d\udcc5'},
     {v:'weekly', l:'Weekly Reports', i:'\ud83d\udcc8'},
-    {v:'imports', l:'Imports (CSV)', i:'\u2b06\ufe0f'},
     {v:'leaderboard', l:'Leaderboard', i:'\ud83c\udfc6'},
     {v:'directory', l:'All Members', i:'\ud83c\udf10'},
     {v:'audit', l:'Activity History', i:'\ud83d\udcdc'},
@@ -549,13 +549,18 @@ function medalHtml(medal){
   return '';
 }
 
-function activitySourceTag(rec){
-  if(!rec) return '';
-  const hasManual = rec.manualPercentage !== null && rec.manualPercentage !== undefined;
-  const postsNote = rec.posts !== null && rec.posts !== undefined ? `${rec.posts} posts` : '';
-  if(rec.source === 'csv') return `<span class="muted" style="font-size:11px;">(CSV${postsNote?' \u00b7 '+postsNote:''})</span>`;
-  if(hasManual) return `<span class="muted" style="font-size:11px;">(manual${postsNote?' \u00b7 '+postsNote:''})</span>`;
-  return postsNote ? `<span class="muted" style="font-size:11px;">(${postsNote})</span>` : '';
+// Only admins set daily activity by hand (moderators can't \u2014 the server enforces this too).
+function canSetActivity(){
+  const u = currentUser();
+  return !!u && u.role === 'admin';
+}
+
+// "Total Posts" (whole community that day) + "Member's Posts" table cells, shown instead of where a record came from.
+function memberPostsText(rec){
+  return rec && rec.posts !== null && rec.posts !== undefined ? String(rec.posts) : '\u2014';
+}
+function postsCellsHtml(date, rec){
+  return `<td data-label="Total Posts">${dailyCommunityTotal(date)}</td><td data-label="Member's Posts"><b>${memberPostsText(rec)}</b></td>`;
 }
 
 function renderRoleDashboard(u){
@@ -583,7 +588,8 @@ function renderRoleDashboard(u){
     <div class="stat-card"><div class="label">Missing Today</div><div class="value" style="color:${missingToday.length?'var(--danger)':'var(--success)'}">${missingToday.length}</div></div>
   `;
 
-  const topRows = wLb.slice(0,5);
+  // Same community-wide medal table as the Leaderboard page (medals are won against everyone, not just a moderator's group).
+  const topRows = weeklyLeaderboard(allMembers().filter(m=>m.status==='active').map(m=>m.id)).slice(0,5);
   const recentLogs = state.auditLogs.slice(0,6);
 
   return `
@@ -608,15 +614,15 @@ function renderRoleDashboard(u){
 
     <div class="card">
       <div class="card-head"><h3>\ud83c\udfc6 Top of the Week</h3><button class="btn btn-ghost btn-sm" onclick="goto('leaderboard')">View full leaderboard \u2192</button></div>
-      ${topRows.length ? `<div class="scrollx"><table><thead><tr><th>Rank</th><th>Member</th><th>Weekly %</th><th>Gold days</th></tr></thead><tbody>
+      ${topRows.length ? `<div class="scrollx"><table><thead><tr><th>Rank</th><th>Member</th><th>Medals this week</th><th>Weekly %</th></tr></thead><tbody>
         ${topRows.map(r=>{
           const todayRec = getRecord(r.userId, today);
           const st = todayRec ? activityStatus(effectivePercentage(todayRec), r.user.assignedPercentage) : null;
           return `<tr>
           <td>${medalHtml(r.medal)} #${r.rank}</td>
           <td><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td>${medalTallyHtml(r)}</td>
           <td>${fmtPct(r.weeklyPct)}</td>
-          <td>${r.goldDays}</td>
         </tr>`;
         }).join('')}
       </tbody></table></div>` : `<div class="empty">No activity recorded yet this week.</div>`}
@@ -680,7 +686,7 @@ function renderMemberDashboard(u){
         <div class="label">Today's Repost</div>
         <div style="margin-top:8px;">${coloredBarHtml(todayPct, u.assignedPercentage, '100%')}</div>
         <div class="value blue" style="margin-top:8px;">${pctVsAssignedHtml(todayPct, u.assignedPercentage)}</div>
-        <div class="muted" style="font-size:12.5px;">${rec?(rec.source==='csv'?'from today\u2019s CSV import':(rec.manualPercentage!==null?'set manually':'from today\u2019s posts')):'Not reported yet'}</div>
+        <div class="muted" style="font-size:12.5px;">${rec?`${memberPostsText(rec)} of ${dailyCommunityTotal(today)} community posts today`:'Not reported yet'}</div>
       </div>
       <div class="stat-card">
         <div class="label">Weekly Activity</div>
@@ -709,11 +715,12 @@ function renderMemberDashboard(u){
 
     <div class="card">
       <h3>My Weekly Breakdown</h3>
-      <div class="scrollx"><table><thead><tr><th>Date</th><th>Activity</th></tr></thead><tbody>
+      <div class="scrollx"><table><thead><tr><th>Date</th><th>Activity</th><th>Total Posts</th><th>My Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
         return `<tr><td>${fmtDateShort(b.date)}</td>
-        <td>${b.record?`${statusDot(activityStatus(pct,u.assignedPercentage))}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td></tr>`;
+        <td>${b.record?`${statusDot(activityStatus(pct,u.assignedPercentage))}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td>
+        ${postsCellsHtml(b.date, b.record)}</tr>`;
       }).join('')}
       </tbody></table></div>
     </div>
@@ -756,12 +763,13 @@ function renderMemberWeekly(u){
       <div style="font-size:34px;font-weight:700;color:var(--sky-deep);">${fmtPct(ws.weeklyPct)}</div>
     </div>
     <div class="card">
-      <div class="scrollx"><table><thead><tr><th>Date</th><th>Today's Repost</th></tr></thead><tbody>
+      <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>Total Posts</th><th>My Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
         const st = b.record ? activityStatus(pct, u.assignedPercentage) : null;
         return `<tr><td>${fmtDate(b.date)}</td>
-        <td>${b.record?`${statusDot(st)}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td></tr>`;
+        <td>${b.record?`${statusDot(st)}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td>
+        ${postsCellsHtml(b.date, b.record)}</tr>`;
       }).join('')}
       </tbody></table></div>
     </div>
@@ -834,7 +842,7 @@ function membersTableHtml(list, isAdmin, canEdit, canRemove, today, editScopeSet
         <td data-label="Status"><span class="badge ${m.status}">${m.status}</span></td>
         <td data-label="">
           ${rowCanEdit?`<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openMemberModal('${m.id}')">Edit</button>`:''}
-          ${rowCanEdit?`<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openSetPercentModal('${m.id}')">Set Activity</button>`:''}
+          ${canSetActivity()?`<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openSetPercentModal('${m.id}')">Set Activity</button>`:''}
           ${rowCanRemove?`<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();toggleMemberStatus('${m.id}')">${m.status==='active'?'Deactivate':'Reactivate'}</button>`:''}
           ${isAdmin?`<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();permanentlyDeleteMember(event,'${m.id}')">Delete</button>`:''}
         </td>
@@ -928,7 +936,7 @@ async function saveMember(e, memberId){
   return false;
 }
 
-/* ---- Set today's activity: admin/mod choose Posts OR Percentage ---- */
+/* ---- Set today's activity: admin chooses Posts OR Percentage ---- */
 function openSetPercentModal(memberId){
   const m = getUser(memberId);
   const today = dateStr(0);
@@ -1032,7 +1040,7 @@ function renderModeratorsList(u){
       <div class="scrollx"><table class="to-cards"><thead><tr><th>Moderator</th><th>Members</th><th>Links</th><th>Permissions</th><th>Status</th><th></th></tr></thead><tbody>
       ${mods.map(m=>{
         const memberCount = membersOf(m.id).length;
-        const permCount = m.permissions ? Object.values(m.permissions).filter(Boolean).length : 0;
+        const permCount = m.permissions ? Object.keys(PERM_LABELS).filter(k=>m.permissions[k]).length : 0;
         return `<tr>
           <td data-label="Moderator"><div class="cell-user"><div class="mini-avatar">${initials(m.displayName)}</div><div><div style="font-weight:600;">${escapeHtml(m.displayName)}</div><div class="muted" style="font-size:11.5px;">@${escapeHtml(m.username)}</div></div></div></td>
           <td data-label="Members">${memberCount}</td>
@@ -1040,7 +1048,7 @@ function renderModeratorsList(u){
             <a class="linkicon ${m.xUsername?'':'off'}" ${m.xUsername?`href="https://x.com/${encodeURIComponent(m.xUsername)}" target="_blank"`:''}>\ud835\udd4a</a>
             <a class="linkicon ${m.whatsapp?'':'off'}" ${m.whatsapp?`href="https://wa.me/${m.whatsapp.replace(/\D/g,'')}" target="_blank"`:''}>\ud83d\udcac</a>
           </td>
-          <td data-label="Permissions">${permCount}/6 granted</td>
+          <td data-label="Permissions">${permCount}/${Object.keys(PERM_LABELS).length} granted</td>
           <td data-label="Status"><span class="badge ${m.status}">${m.status}</span></td>
           <td data-label="">
             <button class="btn btn-outline btn-sm" onclick="openModeratorModal('${m.id}')">Edit</button>
@@ -1055,12 +1063,12 @@ function renderModeratorsList(u){
 
 const PERM_LABELS = {
   addMembers:'Can add members', editMembers:'Can edit members', removeMembers:'Can remove/deactivate members',
-  setPercentage:'Can set activity/percentages', importCsv:'Can import CSV', viewWeekly:'Can view weekly reports'
+  viewWeekly:'Can view weekly reports'
 };
 
 function openModeratorModal(modId){
   const editing = modId ? getUser(modId) : null;
-  const perms = editing ? editing.permissions : { addMembers:true, editMembers:true, removeMembers:false, setPercentage:true, importCsv:false, viewWeekly:true };
+  const perms = editing ? editing.permissions : { addMembers:true, editMembers:true, removeMembers:false, viewWeekly:true };
   openModal(`
     <div class="modal">
       <h2>${editing?'Edit Moderator':'Add Moderator'}</h2>
@@ -1164,11 +1172,9 @@ async function confirmReassignAndDeactivate(modId){
 /* ===================== Part 7: Daily reports ===================== */
 
 function renderDailyReports(u){
-  const editScopeIds = scopeForCurrentUser(); // who this actor can actually add/edit records for
-  const editScopeSet = new Set(editScopeIds);
   const viewIds = allMembers().filter(m=>m.status==='active').map(m=>m.id); // everyone sees everyone's daily reports
   const date = state.ui.params.dailyDate || dateStr(0);
-  const canEdit = u.role==='admin' || canModeratorAct('setPercentage');
+  const canEdit = canSetActivity();
   const ranking = dailyRanking(date, viewIds);
   const rankedIds = new Set(ranking.map(r=>r.userId));
   const missing = viewIds.map(getUser).filter(m=>m && !rankedIds.has(m.id));
@@ -1184,30 +1190,28 @@ function renderDailyReports(u){
     </div>
     <div class="card">
       <div class="card-head"><h3>${fmtDate(date)}</h3><span class="badge role">Community total: ${communityTotal} posts</span></div>
-      <div class="scrollx"><table class="to-cards"><thead><tr><th>Rank</th><th>Member</th><th>Today's Repost</th><th>Source</th><th></th></tr></thead><tbody>
+      <div class="scrollx"><table class="to-cards lb-table"><thead><tr><th>Rank</th><th>Member</th><th>Today's Repost</th><th>Total Posts</th><th>Member's Posts</th><th></th></tr></thead><tbody>
       ${ranking.map(r=>{
         const rec = r.record;
         const st = activityStatus(r.pct, r.user.assignedPercentage);
-        const rowCanEdit = canEdit && editScopeSet.has(r.userId);
         return `<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
           <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
-          <td data-label="Today's Repost">${coloredBarHtml(r.pct, r.user.assignedPercentage)} ${pctVsAssignedHtml(r.pct, r.user.assignedPercentage)} ${activitySourceTag(rec)}</td>
-          <td data-label="Source"><span class="badge role">${rec.source}</span></td>
-          <td data-label="">${rowCanEdit?`<button class="btn btn-outline btn-sm" onclick="openAddDailyModal('${date}','${r.userId}')">Edit</button>`:''}</td>
+          <td data-label="Today's Repost">${coloredBarHtml(r.pct, r.user.assignedPercentage)} ${pctVsAssignedHtml(r.pct, r.user.assignedPercentage)}</td>
+          ${postsCellsHtml(date, rec)}
+          <td data-label="">${canEdit?`<button class="btn btn-outline btn-sm" onclick="openAddDailyModal('${date}','${r.userId}')">Edit</button>`:''}</td>
         </tr>`;
       }).join('')}
       ${missing.map(m=>{
-        const rowCanEdit = canEdit && editScopeSet.has(m.id);
         return `<tr>
           <td data-label="Rank"><span class="muted">\u2014</span></td>
           <td data-label="Member"><div class="cell-user"${m.status!=='active'?' style="opacity:.55;"':''}><div class="mini-avatar">${initials(m.displayName)}</div>${escapeHtml(m.displayName)}${monetizedBadge(m.monetized)}${m.status!=='active'?' <span class="badge inactive" style="margin-left:6px;">inactive</span>':''}</div></td>
           <td data-label="Today's Repost">${m.status==='active'?`<span class="row-status warn">Not reported</span> <span class="muted" style="font-size:11.5px;">(assigned ${fmtPct(m.assignedPercentage)})</span>`:'<span class="muted">\u2014</span>'}</td>
-          <td data-label="Source">\u2014</td>
-          <td data-label="">${rowCanEdit?`<button class="btn btn-outline btn-sm" onclick="openAddDailyModal('${date}','${m.id}')">Add</button>`:''}</td>
+          ${postsCellsHtml(date, null)}
+          <td data-label="">${canEdit?`<button class="btn btn-outline btn-sm" onclick="openAddDailyModal('${date}','${m.id}')">Add</button>`:''}</td>
         </tr>`;
       }).join('')}
-      ${(!ranking.length && !missing.length) ? `<tr><td colspan="5"><div class="empty">No active members yet.</div></td></tr>` : ''}
+      ${(!ranking.length && !missing.length) ? `<tr><td colspan="6"><div class="empty">No active members yet.</div></td></tr>` : ''}
       </tbody></table></div>
     </div>
   `;
@@ -1288,8 +1292,9 @@ async function saveDailyModal(e, date){
 var importState = null; // { date, csvText, rows: [...] }
 
 function renderImports(u){
-  const canImportDaily = u.role==='admin' || canModeratorAct('importCsv');
-  const canImportMembers = u.role==='admin' || canModeratorAct('addMembers') || canModeratorAct('editMembers');
+  // CSV imports are admin-only (the server enforces this too).
+  const canImportDaily = u.role==='admin';
+  const canImportMembers = u.role==='admin';
   if(!canImportDaily && !canImportMembers) return `<div class="empty"><div class="big">\ud83d\udd12</div>You don't have permission to import CSV files.</div>`;
 
   const tab = state.ui.params.importTab || (canImportDaily ? 'daily' : 'members');
@@ -1534,13 +1539,13 @@ function renderMemberDetail(u, memberId){
     </div>
     <div class="card">
       <h3>7-Day Breakdown</h3>
-      <div class="scrollx"><table><thead><tr><th>Date</th><th>Today's Repost</th><th>Source</th></tr></thead><tbody>
+      <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>Total Posts</th><th>Member's Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
         const st = b.record ? activityStatus(pct, m.assignedPercentage) : null;
         return `<tr><td>${fmtDate(b.date)}</td>
         <td>${b.record?`${statusDot(st)}${coloredBarHtml(pct,m.assignedPercentage)} ${pctVsAssignedHtml(pct,m.assignedPercentage)}`:'<span class="row-status warn">Missing</span>'}</td>
-        <td>${b.record?`<span class="badge role">${b.record.source}</span>`:'\u2014'}</td></tr>`;
+        ${postsCellsHtml(b.date, b.record)}</tr>`;
       }).join('')}
       </tbody></table></div>
     </div>
@@ -1550,29 +1555,50 @@ function renderMemberDetail(u, memberId){
 
 /* ===================== Part 10: Leaderboard ===================== */
 
+// A member's medal tally for the week, e.g. "\ud83e\udd472 \ud83e\udd481 \ud83e\udd490".
+function medalTallyHtml(w){
+  if(!w) return '<span class="muted">\u2014</span>';
+  return `<span class="medal-tally"><span>\ud83e\udd47${w.goldDays}</span><span>\ud83e\udd48${w.silverDays}</span><span>\ud83e\udd49${w.bronzeDays}</span></span>`;
+}
+
 function renderLeaderboard(u){
-  const scopeIds = scopeForCurrentUser();
+  // The leaderboard is community-wide: admins, moderators and members all see every active member.
+  const allIds = allMembers().filter(m=>m.status==='active').map(m=>m.id);
   const mode = state.ui.params.lbMode || 'weekly';
   const today = dateStr(0);
-  const dRank = dailyRanking(today, scopeIds);
-  const wRank = weeklyLeaderboard(scopeIds);
+  const dRank = dailyRanking(today, allIds);
+  const wRank = weeklyLeaderboard(allIds);
   const rows = mode==='daily' ? dRank : wRank;
   const podium = rows.slice(0,3);
   const isAdmin = u.role === 'admin';
+  const weekById = {}; wRank.forEach(r => weekById[r.userId] = r);
+  const todayById = {}; dRank.forEach(r => todayById[r.userId] = r);
+  // Weekly % is part of someone's weekly report \u2014 members only see their own.
+  const showWeeklyPct = r => u.role !== 'member' || r.userId === u.id;
 
   function rowStatus(r){
     const todayRec = getRecord(r.userId, today);
     return todayRec ? activityStatus(effectivePercentage(todayRec), r.user.assignedPercentage) : null;
   }
+  function todayMedalHtml(userId){
+    const t = todayById[userId];
+    return t ? `${medalHtml(t.medal)} #${t.rank}` : '<span class="muted">Not reported</span>';
+  }
 
   function podiumSlot(r, pos){
-    if(!r) return `<div class="podium-slot p${pos}"><div class="empty" style="padding:10px;">\u2014</div></div>`;
-    return `<div class="podium-slot p${pos}">
-      <div class="rank-medal">${medalHtml(r.medal)}</div>
-      <div class="mini-avatar" style="margin:0 auto 8px;width:36px;height:36px;font-size:14px;">${initials(r.user.displayName)}</div>
-      <div class="pname">${statusDot(rowStatus(r))}${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div>
-      <div class="pscore">${mode==='daily'?fmtPct(r.pct):fmtPct(r.weeklyPct)}</div>
-      <div class="psub">${mode==='daily'?`today's repost`:`${r.points} gold day${r.points===1?'':'s'} this week`}</div>
+    const medal = pos===1?'gold':pos===2?'silver':'bronze';
+    if(!r) return `<div class="podium-slot p${pos}">
+      <div class="rank-medal">${medalHtml(medal)}</div>
+      <div class="podium-avatar empty-avatar">?</div>
+      <div class="pname"><span class="pn muted">No one yet</span></div>
+    </div>`;
+    return `<div class="podium-slot p${pos}"${memberLinkAttrs(r.userId)}>
+      <div class="rank-medal">${medalHtml(medal)}</div>
+      <div class="podium-avatar">${initials(r.user.displayName)}</div>
+      <div class="pname" title="${escapeHtml(r.user.displayName)}">${statusDot(rowStatus(r))}<span class="pn">${escapeHtml(r.user.displayName)}</span>${monetizedBadge(r.user.monetized)}</div>
+      <div class="pscore">${mode==='daily'?fmtPct(r.pct):medalTallyHtml(r)}</div>
+      <div class="psub">${mode==='daily'?`today's repost`:`medals this week`}</div>
+      ${mode==='daily'?`<div class="ptally">${medalTallyHtml(weekById[r.userId])}</div>`:''}
     </div>`;
   }
 
@@ -1580,7 +1606,7 @@ function renderLeaderboard(u){
 
   return `
     <div class="page-head">
-      <div><h1>\ud83c\udfc6 Leaderboard</h1><div class="sub">Daily toppers get Gold/Silver/Bronze \u00b7 weekly rank is built from 1st-place days</div></div>
+      <div><h1>\ud83c\udfc6 Leaderboard</h1><div class="sub">Whole community \u00b7 daily top 3 get Gold/Silver/Bronze \u00b7 the week adds those medals up</div></div>
       <div class="toolbar">
         <button class="btn ${mode==='daily'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.lbMode='daily'; render();">Today</button>
         <button class="btn ${mode==='weekly'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.lbMode='weekly'; render();">This Week</button>
@@ -1601,24 +1627,27 @@ function renderLeaderboard(u){
     </div>
 
     <div class="card">
-      <h3>${mode==='daily'?'Today\u2019s Full Ranking \u2014 '+fmtDate(today):'Weekly Points \u2014 this week'}</h3>
-      <div class="scrollx"><table class="to-cards"><thead><tr><th>Rank</th><th>Member</th>${mode==='daily'?'<th>Today\'s Repost</th>':'<th>Gold</th><th>Silver</th><th>Bronze</th><th>Points</th><th>Weekly %</th>'}</tr></thead><tbody>
+      <h3>${mode==='daily'?'Today\u2019s Full Ranking \u2014 '+fmtDate(today):'Weekly Medal Table \u2014 last 7 days'}</h3>
+      <div class="scrollx"><table class="to-cards lb-table"><thead><tr><th>Rank</th><th>Member</th>${mode==='daily'
+        ?'<th>Today\'s Repost</th><th>This Week</th>'
+        :'<th>\ud83e\udd47 Gold</th><th>\ud83e\udd48 Silver</th><th>\ud83e\udd49 Bronze</th><th>Today</th><th>Weekly %</th>'}</tr></thead><tbody>
       ${rows.map(r=>mode==='daily'?`<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
           <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(rowStatus(r))}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
           <td data-label="Today's Repost">${pctVsAssignedHtml(r.pct, r.user.assignedPercentage)}</td>
+          <td data-label="This Week">${medalTallyHtml(weekById[r.userId])}</td>
         </tr>`:`<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
           <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(rowStatus(r))}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
-          <td data-label="Gold">\ud83e\udd47 ${r.goldDays}</td>
-          <td data-label="Silver">\ud83e\udd48 ${r.silverDays}</td>
-          <td data-label="Bronze">\ud83e\udd49 ${r.bronzeDays}</td>
-          <td data-label="Points"><b>${r.points}</b></td>
-          <td data-label="Weekly %">${fmtPct(r.weeklyPct)}</td>
+          <td data-label="Gold"><b>${r.goldDays}</b></td>
+          <td data-label="Silver">${r.silverDays}</td>
+          <td data-label="Bronze">${r.bronzeDays}</td>
+          <td data-label="Today">${todayMedalHtml(r.userId)}</td>
+          <td data-label="Weekly %">${showWeeklyPct(r)?fmtPct(r.weeklyPct):'<span class="muted">\u2014</span>'}</td>
         </tr>`).join('')}
       ${!rows.length?`<tr><td colspan="7"><div class="empty">No activity recorded yet.</div></td></tr>`:''}
       </tbody></table></div>
-      <div class="muted" style="font-size:12px;margin-top:10px;">Weekly points = number of days a member finished #1 (Gold) this week. Ties are broken by weekly activity %. Dots show today's status vs each member's assigned target: <span class="status-dot green" style="margin:0 2px;"></span>on target, <span class="status-dot orange" style="margin:0 2px;"></span>just under, <span class="status-dot red" style="margin:0 2px;"></span>well under. <span class="monetized-dot" style="margin:0 2px;"></span>= monetized.</div>
+      <div class="muted" style="font-size:12px;margin-top:10px;">Every day the top 3 reposters get \ud83e\udd47 Gold, \ud83e\udd48 Silver and \ud83e\udd49 Bronze. The weekly table adds those medals up over the last 7 days: most Gold wins, ties go to more Silver, then more Bronze, then weekly activity %.${u.role==='member'?' You only see your own weekly %.':''} Dots show today's status vs each member's assigned target: <span class="status-dot green" style="margin:0 2px;"></span>on target, <span class="status-dot orange" style="margin:0 2px;"></span>just under, <span class="status-dot red" style="margin:0 2px;"></span>well under. <span class="monetized-dot" style="margin:0 2px;"></span>= monetized.</div>
     </div>
   `;
 }
@@ -1643,7 +1672,7 @@ function renderDirectory(u){
   `;
 }
 
-const PAYOUT_TYPES = { premium:'\ud83c\udf1f Premium Award', bonus:'\ud83d\udcb5 Bonus', correction:'\u270f\ufe0f Correction', other:'\ud83d\udcdd Other' };
+const PAYOUT_TYPES = { premium:'\ud83c\udf1f Premium Award', bonus:'\ud83d\udcb5 Payout', /* stored as "bonus" so existing records keep working */ correction:'\u270f\ufe0f Correction', other:'\ud83d\udcdd Other' };
 
 function openPayoutModal(opts){
   opts = opts || {};
@@ -1852,7 +1881,7 @@ function renderSettings(u){
     </div>
     <div class="card" style="max-width:460px;">
       <h3>How percentages work</h3>
-      <p class="muted" style="font-size:13px;">Each member has an <b>assigned target %</b> (10\u2013100, set when they're added). Their daily "Today's Repost" is compared against that target and color-coded: green at or above target, orange just under it, red well under. A day's actual % comes from posts entered (calculated against that day's total community posts), a percentage set directly by admin/mod, or a CSV <code>repost_percentage</code> import \u2014 whichever was entered last always wins.</p>
+      <p class="muted" style="font-size:13px;">Each member has an <b>assigned target %</b> (10\u2013100, set when they're added). Their daily "Today's Repost" is compared against that target and color-coded: green at or above target, orange just under it, red well under. A day's actual % comes from posts entered (calculated against that day's total community posts), a percentage set directly by an admin, or a CSV <code>repost_percentage</code> import \u2014 whichever was entered last always wins.</p>
     </div>
     <div class="card" style="max-width:460px;">
       <h3>Data</h3>
