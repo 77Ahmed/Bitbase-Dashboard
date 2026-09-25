@@ -310,7 +310,7 @@ app.post('/api/users', requireAuth, (req, res) => {
     const mod = {
       id: uid('u'), username: uname, passwordHash: bcrypt.hashSync(password || 'changeme123', 10), displayName: displayName.trim(),
       role: 'moderator', status: 'active', xUsername: normalizeUsername(xUsername||''), whatsapp: (whatsapp||'').replace(/\D/g,''),
-      moderatorId: null, permissions: permissions || { addMembers:true, editMembers:true, removeMembers:false, setPercentage:true, importCsv:false, viewWeekly:true },
+      moderatorId: null, permissions: permissions || { addMembers:true, editMembers:true, removeMembers:false, viewWeekly:true },
       createdAt: Date.now()
     };
     users.push(mod); persistUsers();
@@ -424,8 +424,8 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, (req, res) => {
 
 app.post('/api/users/import', requireAuth, (req, res) => {
   const actor = req.user;
-  if(!(actor.role==='admin' || canModeratorAct(actor,'addMembers') || canModeratorAct(actor,'editMembers'))){
-    res.status(403).json({ error: 'You do not have permission to import members.' }); return;
+  if(actor.role !== 'admin'){
+    res.status(403).json({ error: 'Only admins can import CSV files.' }); return;
   }
   const { csvText, confirm } = req.body || {};
   if(!csvText){ res.status(400).json({ error: 'No CSV text provided.' }); return; }
@@ -503,9 +503,9 @@ app.post('/api/activity', requireAuth, (req, res) => {
   const { userId, date, posts, manualPercentage, reason } = req.body || {};
   const target = getUser(userId);
   if(!target || target.role !== 'member'){ res.status(404).json({ error: 'Member not found.' }); return; }
-  const inScope = actor.role==='admin' || (actor.role==='moderator' && target.moderatorId===actor.id);
-  if(!inScope || !(actor.role==='admin' || canModeratorAct(actor,'setPercentage'))){
-    res.status(403).json({ error: 'You do not have permission to set this member\u2019s activity.' }); return;
+  // Only admins set daily activity by hand \u2014 moderators can't, whatever permissions they were given.
+  if(actor.role !== 'admin'){
+    res.status(403).json({ error: 'Only admins can set daily activity.' }); return;
   }
   const postsVal = (posts===undefined||posts===null||posts==='') ? null : Math.max(0, parseInt(posts,10)||0);
   const manualVal = (manualPercentage===undefined||manualPercentage===null||manualPercentage==='') ? null : clamp(Number(manualPercentage),0,100);
@@ -526,8 +526,8 @@ app.post('/api/activity', requireAuth, (req, res) => {
 
 app.post('/api/activity/import', requireAuth, (req, res) => {
   const actor = req.user;
-  if(!(actor.role==='admin' || canModeratorAct(actor,'importCsv'))){
-    res.status(403).json({ error: 'You do not have permission to import daily activity.' }); return;
+  if(actor.role !== 'admin'){
+    res.status(403).json({ error: 'Only admins can import CSV files.' }); return;
   }
   const { csvText, date, confirm } = req.body || {};
   if(!csvText || !date){ res.status(400).json({ error: 'CSV text and date are required.' }); return; }
