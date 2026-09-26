@@ -99,8 +99,12 @@ time). Unlike usage-metered hosts, this bill doesn't move around.
 6. Go to **Environment** and add a variable: `DATA_DIR` = `/var/data`
    (matching the mount path from step 5 — this is what makes the app write
    your CSVs onto the persistent disk instead of the app's own ephemeral copy).
+   Also add `SETUP_KEY` = a long random secret only you know. Until the Admin
+   account exists, anyone opening the site sees an "Under maintenance" page —
+   only a link with your key can run Setup.
 7. Deploy. Render gives you a public `https://your-app.onrender.com` URL —
-   open it, and you should land on the Setup screen to create your Admin account.
+   open `https://your-app.onrender.com/?setup=YOUR_SETUP_KEY` to create your
+   Admin account. After that, share the plain URL with your members.
 8. Restart or redeploy the service anytime — your `users.csv`, `daily_activity.csv`,
    `payouts.csv`, and `audit_logs.csv` all live on the Disk and survive it.
 
