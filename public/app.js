@@ -122,6 +122,7 @@ async function fetchState(){
   state.settings = data.settings || state.settings;
   state.session = data.session || { currentUserId: null };
   state.hasAdminFlag = !!data.hasAdmin;
+  state.setupLocked = !!data.setupLocked;
   if(data.authenticated) await fetchPayouts();
 }
 async function fetchPayouts(){
@@ -201,8 +202,52 @@ function effectivePercentage(rec){
   return p === null ? 0 : p;
 }
 
-function weeklyStats(userId, endOffset){
-  const days = last7Dates(endOffset||0);
+// The first day a member's reports count from: the day they were added — or earlier,
+// if an admin back-filled activity for them before that.
+function memberStartDate(userId){
+  const member = getUser(userId);
+  let start = member && member.createdAt ? new Date(member.createdAt).toISOString().slice(0,10) : null;
+  state.dailyActivity.forEach(r => { if(r.userId === userId && (!start || r.date < start)) start = r.date; });
+  return start;
+}
+
+/* ---------------- Community weeks ----------------
+   Weeks are fixed 7-day blocks counted from the day the community started
+   (e.g. started Sep 25 -> week 1 = Sep 25-Oct 1, week 2 = Oct 2-8, ...).
+   Everything weekly (reports, leaderboard, dashboards, Premium pick) uses the
+   current block; a member who joined mid-week only has their own days counted. */
+function isoToUtcMs(iso){ return Date.parse(iso + 'T00:00:00Z'); }
+function addDaysIso(iso, n){ return new Date(isoToUtcMs(iso) + n*86400000).toISOString().slice(0,10); }
+
+function communityStartDate(){
+  if(state.settings && state.settings.startedOn) return state.settings.startedOn;
+  // Older installs: fall back to when the first admin account was created.
+  const admins = state.users.filter(u => u.role === 'admin' && u.createdAt);
+  if(!admins.length) return null;
+  return new Date(Math.min.apply(null, admins.map(a => a.createdAt))).toISOString().slice(0,10);
+}
+
+// { number, start, end, dates } for the week containing today; `dates` stops at today.
+function currentWeek(){
+  const today = dateStr(0);
+  const start = communityStartDate();
+  if(!start || start > today) return { number: 1, start: today, end: addDaysIso(today, 6), dates: [today] };
+  const daysIn = Math.round((isoToUtcMs(today) - isoToUtcMs(start)) / 86400000);
+  const index = Math.floor(daysIn / 7);
+  const weekStart = addDaysIso(start, index * 7);
+  const dates = [];
+  for(let d = weekStart; d <= today; d = addDaysIso(d, 1)) dates.push(d);
+  return { number: index + 1, start: weekStart, end: addDaysIso(weekStart, 6), dates };
+}
+function weekLabel(){
+  const w = currentWeek();
+  return `Week ${w.number} · ${fmtDateShort(w.start)} – ${fmtDateShort(w.end)}`;
+}
+
+function weeklyStats(userId){
+  // A member's week only covers days since they joined — no "Missing" rows for days before that.
+  const start = memberStartDate(userId);
+  const days = currentWeek().dates.filter(d => !start || d >= start);
   const member = getUser(userId);
   const assignedPct = member ? member.assignedPercentage : 50;
   let achievedDays = 0, daysReported = 0;
@@ -217,10 +262,11 @@ function weeklyStats(userId, endOffset){
     }
     return { date, record: rec, pct, achieved };
   });
-  // Out of the full 7-day week (not just days reported) — a missing day, like a
-  // 0% day, simply isn't a day the target was hit. Meet the target all 7 days -> 100%.
-  const weeklyPct = Math.round((achievedDays/7)*1000)/10;
-  return { breakdown, achievedDays, daysReported, weeklyPct, assignedPct };
+  // Out of every day in their week so far (not just days reported) — a missing day, like a
+  // 0% day, simply isn't a day the target was hit. Meet the target every day -> 100%.
+  const totalDays = days.length;
+  const weeklyPct = totalDays ? Math.round((achievedDays/totalDays)*1000)/10 : 0;
+  return { breakdown, achievedDays, daysReported, totalDays, weeklyPct, assignedPct };
 }
 
 /* ---------------- Leaderboard ---------------- */
@@ -238,9 +284,9 @@ function dailyRanking(date, scopeIds){
   return rows;
 }
 
-function weeklyLeaderboard(scopeIds, endOffset){
+function weeklyLeaderboard(scopeIds){
   const ids = scopeIds || allMembers().map(m=>m.id);
-  const days = last7Dates(endOffset||0);
+  const days = currentWeek().dates;
   const points = {}; ids.forEach(id => points[id] = { userId:id, goldDays:0, silverDays:0, bronzeDays:0, points:0 });
   days.forEach(date => {
     const ranking = dailyRanking(date, ids);
@@ -253,7 +299,7 @@ function weeklyLeaderboard(scopeIds, endOffset){
   const rows = ids.map(id => {
     const u = getUser(id);
     if(!u || u.status !== 'active') return null;
-    const ws = weeklyStats(id, endOffset);
+    const ws = weeklyStats(id);
     return { userId:id, user:u, points: points[id].points, goldDays: points[id].goldDays, silverDays: points[id].silverDays, bronzeDays: points[id].bronzeDays, weeklyPct: ws.weeklyPct };
   }).filter(Boolean);
   // Medal-table order: most gold days wins; ties go to more silver, then more bronze, then weekly %.
@@ -356,7 +402,8 @@ function navFor(role){
 function render(){
   const root = document.getElementById('root');
   if(!hasAdmin()){
-    root.innerHTML = renderSetup();
+    // With a SETUP_KEY on the server, only a link carrying ?setup=... shows the Setup form.
+    root.innerHTML = (state.setupLocked && setupKeyFromUrl() === null) ? renderMaintenance() : renderSetup();
     return;
   }
   const u = currentUser();
@@ -410,7 +457,27 @@ async function logout(){
 
 /* ===================== Part 3: Setup & Login ===================== */
 
+function setupKeyFromUrl(){
+  try{ return new URLSearchParams(location.search).get('setup'); }catch(e){ return null; }
+}
+
+function renderMaintenance(){
+  return `
+  <div class="login-screen">
+    <div class="cloud-blob" style="width:220px;height:120px;top:8%;left:8%;"></div>
+    <div class="cloud-blob" style="width:160px;height:90px;top:65%;left:78%;animation-delay:-8s;"></div>
+    <div class="login-card" style="text-align:center;">
+      <div class="login-brand" style="justify-content:center;"><span class="name">Bitbase<span class="brand-tag">community</span></span></div>
+      <div style="font-size:34px;margin:14px 0 8px;">🛠️</div>
+      <h2 style="font-size:19px;margin-bottom:6px;">Under maintenance</h2>
+      <div class="login-sub" style="margin-bottom:18px;">We're getting things ready. Please check back soon.</div>
+      <button class="btn btn-primary" onclick="location.reload()">Try again</button>
+    </div>
+  </div>`;
+}
+
 function renderSetup(){
+  const urlKey = setupKeyFromUrl();
   return `
   <div class="login-screen">
     <div class="cloud-blob" style="width:220px;height:120px;top:8%;left:8%;"></div>
@@ -441,6 +508,10 @@ function renderSetup(){
           <label>Confirm password</label>
           <input id="setupPassword2" type="password" autocomplete="new-password" placeholder="Re-type the password" required minlength="6" />
         </div>
+        ${state.setupLocked?`<div class="field">
+          <label>Setup key</label>
+          <input id="setupKey" type="password" autocomplete="off" required value="${escapeHtml(urlKey||'')}" placeholder="The SETUP_KEY set on the server" />
+        </div>`:''}
         <button class="btn btn-primary" type="submit">Create Admin account</button>
       </form>
       <div class="demo-box">
@@ -464,7 +535,10 @@ async function doSetup(e){
   if(password !== password2){ box.innerHTML = `<div class="login-error">Passwords don't match.</div>`; return false; }
 
   try{
-    await apiSend('POST', '/setup', { communityName, displayName, username, password });
+    const keyEl = document.getElementById('setupKey');
+    await apiSend('POST', '/setup', { communityName, displayName, username, password, setupKey: keyEl ? keyEl.value : undefined });
+    // Drop ?setup=... from the address bar so the key isn't left in history or shared by accident.
+    try{ history.replaceState(null, '', location.pathname); }catch(e){}
     await fetchState();
     state.ui.view = 'dashboard';
     render();
@@ -613,7 +687,7 @@ function renderRoleDashboard(u){
     </div>` : ''}
 
     <div class="card">
-      <div class="card-head"><h3>\ud83c\udfc6 Top of the Week</h3><button class="btn btn-ghost btn-sm" onclick="goto('leaderboard')">View full leaderboard \u2192</button></div>
+      <div class="card-head"><h3>\ud83c\udfc6 Top of the Week <span class="muted" style="font-size:12px;font-weight:500;">${weekLabel()}</span></h3><button class="btn btn-ghost btn-sm" onclick="goto('leaderboard')">View full leaderboard \u2192</button></div>
       ${topRows.length ? `<div class="scrollx"><table><thead><tr><th>Rank</th><th>Member</th><th>Medals this week</th><th>Weekly %</th></tr></thead><tbody>
         ${topRows.map(r=>{
           const todayRec = getRecord(r.userId, today);
@@ -692,7 +766,7 @@ function renderMemberDashboard(u){
         <div class="label">Weekly Activity</div>
         <div class="pbar" style="margin-top:8px;"><span style="width:${ws.weeklyPct}%"></span></div>
         <div class="value blue" style="margin-top:8px;">${fmtPct(ws.weeklyPct)}</div>
-        <div class="muted" style="font-size:12.5px;">average over 7 days</div>
+        <div class="muted" style="font-size:12.5px;">days on target &middot; ${ws.achievedDays}/${ws.totalDays} this week</div>
       </div>
       <div class="stat-card">
         <div class="label">Today's Rank</div>
@@ -757,7 +831,7 @@ function renderMemberProfile(u){
 function renderMemberWeekly(u){
   const ws = weeklyStats(u.id);
   return `
-    <div class="page-head"><div><h1>My Weekly Activity</h1><div class="sub">This week \u00b7 % of days I met my ${fmtPct(u.assignedPercentage)} target \u2014 7/7 days = 100%</div></div></div>
+    <div class="page-head"><div><h1>My Weekly Activity</h1><div class="sub">${weekLabel()} \u00b7 % of days I met my ${fmtPct(u.assignedPercentage)} target \u2014 only days since I joined count</div></div></div>
     <div class="card" style="max-width:420px;text-align:center;">
       <div class="label muted" style="margin-bottom:6px;">Weekly Activity</div>
       <div style="font-size:34px;font-weight:700;color:var(--sky-deep);">${fmtPct(ws.weeklyPct)}</div>
@@ -1177,7 +1251,8 @@ function renderDailyReports(u){
   const canEdit = canSetActivity();
   const ranking = dailyRanking(date, viewIds);
   const rankedIds = new Set(ranking.map(r=>r.userId));
-  const missing = viewIds.map(getUser).filter(m=>m && !rankedIds.has(m.id));
+  // Members who hadn't joined yet on this date aren't "missing" — they just don't appear.
+  const missing = viewIds.map(getUser).filter(m=>{ if(!m || rankedIds.has(m.id)) return false; const s = memberStartDate(m.id); return !s || s <= date; });
   const communityTotal = dailyCommunityTotal(date);
 
   return `
@@ -1489,7 +1564,7 @@ function renderWeeklyReports(u){
 
   return `
     <div class="page-head">
-      <div><h1>Weekly Reports</h1><div class="sub">This week \u00b7 % of days each member met their assigned target \u2014 7/7 = 100%</div></div>
+      <div><h1>Weekly Reports</h1><div class="sub">${weekLabel()} \u00b7 % of days each member met their assigned target \u2014 only days since they joined count</div></div>
       ${!isAdmin?`<div class="toolbar">
         <button class="btn ${viewScope==='mine'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.weeklyViewScope='mine'; render();">My Members</button>
         <button class="btn ${viewScope==='all'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.weeklyViewScope='all'; render();">All Members</button>
@@ -1535,7 +1610,7 @@ function renderMemberDetail(u, memberId){
     </div>
     <div class="grid-stats">
       <div class="stat-card"><div class="label">Weekly Activity</div><div class="value blue">${fmtPct(ws.weeklyPct)}</div></div>
-      <div class="stat-card"><div class="label">Days Reported</div><div class="value">${ws.daysReported}/7</div></div>
+      <div class="stat-card"><div class="label">Days Reported</div><div class="value">${ws.daysReported}/${ws.totalDays}</div></div>
     </div>
     <div class="card">
       <h3>7-Day Breakdown</h3>
@@ -1627,7 +1702,7 @@ function renderLeaderboard(u){
     </div>
 
     <div class="card">
-      <h3>${mode==='daily'?'Today\u2019s Full Ranking \u2014 '+fmtDate(today):'Weekly Medal Table \u2014 last 7 days'}</h3>
+      <h3>${mode==='daily'?'Today\u2019s Full Ranking \u2014 '+fmtDate(today):'Weekly Medal Table \u2014 '+weekLabel()}</h3>
       <div class="scrollx"><table class="to-cards lb-table"><thead><tr><th>Rank</th><th>Member</th>${mode==='daily'
         ?'<th>Today\'s Repost</th><th>This Week</th>'
         :'<th>\ud83e\udd47 Gold</th><th>\ud83e\udd48 Silver</th><th>\ud83e\udd49 Bronze</th><th>Today</th><th>Weekly %</th>'}</tr></thead><tbody>
@@ -1647,7 +1722,7 @@ function renderLeaderboard(u){
         </tr>`).join('')}
       ${!rows.length?`<tr><td colspan="7"><div class="empty">No activity recorded yet.</div></td></tr>`:''}
       </tbody></table></div>
-      <div class="muted" style="font-size:12px;margin-top:10px;">Every day the top 3 reposters get \ud83e\udd47 Gold, \ud83e\udd48 Silver and \ud83e\udd49 Bronze. The weekly table adds those medals up over the last 7 days: most Gold wins, ties go to more Silver, then more Bronze, then weekly activity %.${u.role==='member'?' You only see your own weekly %.':''} Dots show today's status vs each member's assigned target: <span class="status-dot green" style="margin:0 2px;"></span>on target, <span class="status-dot orange" style="margin:0 2px;"></span>just under, <span class="status-dot red" style="margin:0 2px;"></span>well under. <span class="monetized-dot" style="margin:0 2px;"></span>= monetized.</div>
+      <div class="muted" style="font-size:12px;margin-top:10px;">Every day the top 3 reposters get \ud83e\udd47 Gold, \ud83e\udd48 Silver and \ud83e\udd49 Bronze. The weekly table adds those medals up over the current community week (weeks run in 7-day blocks from the day the community started): most Gold wins, ties go to more Silver, then more Bronze, then weekly activity %.${u.role==='member'?' You only see your own weekly %.':''} Dots show today's status vs each member's assigned target: <span class="status-dot green" style="margin:0 2px;"></span>on target, <span class="status-dot orange" style="margin:0 2px;"></span>just under, <span class="status-dot red" style="margin:0 2px;"></span>well under. <span class="monetized-dot" style="margin:0 2px;"></span>= monetized.</div>
     </div>
   `;
 }
@@ -1876,6 +1951,8 @@ function renderSettings(u){
       <form onsubmit="return saveSettings(event)">
         <div class="field"><label>Community name</label><input id="setName" value="${escapeHtml(s.communityName)}" /></div>
         <div class="field"><label>Timezone</label><input id="setTz" value="${escapeHtml(s.timezone)}" /></div>
+        <div class="field"><label>Community start date</label><input id="setStart" type="date" max="${dateStr(0)}" value="${communityStartDate()||dateStr(0)}" />
+          <div class="muted" style="font-size:11.5px;margin-top:4px;">Weeks run in 7-day blocks from this day (now: ${weekLabel()}). Weekly reports, the leaderboard and Premium all use it.</div></div>
         <button class="btn btn-primary" type="submit" style="margin-top:6px;">Save settings</button>
       </form>
     </div>
@@ -1896,8 +1973,9 @@ async function saveSettings(e){
   e.preventDefault();
   const communityName = document.getElementById('setName').value.trim() || 'Simply Cloudy';
   const timezone = document.getElementById('setTz').value.trim() || 'Asia/Karachi';
+  const startedOn = document.getElementById('setStart').value || undefined;
   try{
-    await apiSend('PUT', '/settings', { communityName, timezone });
+    await apiSend('PUT', '/settings', { communityName, timezone, startedOn });
     toast('Settings saved.');
     await fetchState();
     render();
