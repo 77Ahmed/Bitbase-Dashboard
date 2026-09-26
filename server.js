@@ -24,6 +24,9 @@ const ACTIVITY_CSV = path.join(DATA_DIR, 'daily_activity.csv');
 const AUDIT_CSV = path.join(DATA_DIR, 'audit_logs.csv');
 const PAYOUTS_CSV = path.join(DATA_DIR, 'payouts.csv');
 const SETTINGS_JSON = path.join(DATA_DIR, 'settings.json');
+// When set (e.g. on Render), only someone who knows this key can run first-time Setup.
+// Everyone else sees an "under maintenance" page until the admin account exists.
+const SETUP_KEY = process.env.SETUP_KEY || '';
 
 const USER_COLUMNS = ['id','username','password_hash','display_name','role','status','x_username','whatsapp','moderator_id','assigned_percentage','monetized','permissions_json','created_at'];
 const ACTIVITY_COLUMNS = ['id','user_id','date','posts','manual_percentage','reason','source','created_by','updated_by','created_at','updated_at'];
@@ -111,6 +114,11 @@ function persistPayouts(){ writeCsvAtomic(PAYOUTS_CSV, PAYOUT_COLUMNS, payouts.m
 function persistSettings(){ fs.writeFileSync(SETTINGS_JSON, JSON.stringify(settings, null, 2)); }
 
 /* ---------------- Small helpers (mirrors of the frontend's own logic) ---------------- */
+function safeEqual(a, b){
+  const ha = crypto.createHash('sha256').update(String(a)).digest();
+  const hb = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
 function uid(prefix){ return prefix + '_' + crypto.randomBytes(6).toString('hex'); }
 function normalizeUsername(u){ return (u||'').trim().toLowerCase().replace(/^@/, ''); }
 function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
@@ -223,7 +231,7 @@ function requireAdmin(req, res, next){
 app.get('/api/state', (req, res) => {
   const viewer = getSessionUser(req);
   if(!viewer){
-    res.json({ authenticated:false, hasAdmin: hasAdmin(), settings: { communityName: settings.communityName }, users: [], dailyActivity: [], auditLogs: [], directory: [] });
+    res.json({ authenticated:false, hasAdmin: hasAdmin(), setupLocked: !!SETUP_KEY, settings: { communityName: settings.communityName }, users: [], dailyActivity: [], auditLogs: [], directory: [] });
     return;
   }
 
@@ -253,7 +261,8 @@ app.get('/api/state', (req, res) => {
 
 app.post('/api/setup', (req, res) => {
   if(hasAdmin()){ res.status(400).json({ error: 'Setup has already been completed.' }); return; }
-  const { communityName, displayName, username, password } = req.body || {};
+  const { communityName, displayName, username, password, setupKey } = req.body || {};
+  if(SETUP_KEY && !safeEqual(setupKey || '', SETUP_KEY)){ res.status(403).json({ error: 'Invalid setup key.' }); return; }
   const uname = normalizeUsername(username);
   if(!uname || !displayName || !password || password.length < 6){
     res.status(400).json({ error: 'Please fill in all fields (password must be at least 6 characters).' });
@@ -266,6 +275,7 @@ app.post('/api/setup', (req, res) => {
   users.push(admin);
   persistUsers();
   settings.communityName = (communityName || '').trim() || 'My Community';
+  settings.startedOn = dateStr(0); // community weeks are counted in 7-day blocks from this day
   persistSettings();
   logAudit(admin.displayName, `Created the community and the first Admin account (@${admin.username})`, '');
   const token = createSession(admin.id);
@@ -696,7 +706,11 @@ app.delete('/api/payouts/:id', requireAuth, requireAdmin, (req, res) => {
 });
 
 app.put('/api/settings', requireAuth, requireAdmin, (req, res) => {
-  const { communityName, timezone } = req.body || {};
+  const { communityName, timezone, startedOn } = req.body || {};
+  if(startedOn !== undefined){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(startedOn) || isNaN(Date.parse(startedOn))){ res.status(400).json({ error: 'Start date must be a valid date.' }); return; }
+    settings.startedOn = startedOn;
+  }
   if(communityName !== undefined) settings.communityName = communityName.trim() || 'My Community';
   if(timezone !== undefined) settings.timezone = timezone.trim() || 'Asia/Karachi';
   persistSettings();
