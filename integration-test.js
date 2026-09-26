@@ -475,6 +475,8 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.document.getElementById('loginPassword').value = 'admin123456';
     submit(w, 'loginUsername');
     await wait(400);
+    // Weeks are counted from the community start date — pretend it started 6 days ago so this is a full 7-day week.
+    await w.apiSend('PUT', '/settings', { startedOn: w.dateStr(-6) });
     const created = await w.apiSend('POST', '/users', { role:'member', username:'weeklytest', password:'user123456', displayName:'Weekly Test', assignedPercentage:50 });
     const id = created.user.id;
     const d = off => w.dateStr(off);
@@ -501,6 +503,18 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     const ws = w.weeklyStats(id);
     if(ws.achievedDays !== 7) throw new Error('expected achievedDays=7, got ' + ws.achievedDays);
     if(ws.weeklyPct !== 100) throw new Error('expected weeklyPct=100, got ' + ws.weeklyPct);
+  });
+
+  await tryAsync('a member added today has a 1-day week (no "Missing" days before they joined)', async () => {
+    const created = await w.apiSend('POST', '/users', { role:'member', username:'joinedtoday', password:'user123456', displayName:'Joined Today', assignedPercentage:50 });
+    const id = created.user.id;
+    await w.apiSend('POST', '/activity', { userId:id, date: w.dateStr(0), posts:null, manualPercentage:60, reason:'t' });
+    await w.fetchState();
+    const ws = w.weeklyStats(id);
+    if(ws.breakdown.length !== 1 || ws.totalDays !== 1) throw new Error('expected a 1-day week, got ' + ws.breakdown.length);
+    if(ws.weeklyPct !== 100) throw new Error('on target on their only day should be 100%, got ' + ws.weeklyPct);
+    w.state.ui.params = { dailyDate: w.dateStr(-2) }; w.state.ui.view = 'daily'; w.render(); await wait(50);
+    if(html(w).includes('Joined Today')) throw new Error('Daily Reports for a date before they joined should not list them as Not reported');
   });
 
   // ---------- 21. All Members / My Members toggle ----------
@@ -680,6 +694,28 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     await wait(400);
     w.state.ui.params.lbMode = 'weekly'; w.goto('leaderboard'); await wait(50);
     if(!html(w).includes('Perfect Week') || !html(w).includes('Tanvir Shah')) throw new Error('john should see members outside his group on the leaderboard');
+  });
+
+  // ---------- 25. Weeks are fixed 7-day blocks from the community start date ----------
+  await tryAsync('community started 9 days ago -> this is Week 2, covering only the last 3 days', async () => {
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'admin';
+    w.document.getElementById('loginPassword').value = 'admin123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    await w.apiSend('PUT', '/settings', { startedOn: w.dateStr(-9) });
+    await w.fetchState();
+    const wk = w.currentWeek();
+    if(wk.number !== 2) throw new Error('expected week 2, got ' + wk.number);
+    if(wk.start !== w.dateStr(-2) || wk.dates.length !== 3) throw new Error(`expected week to start ${w.dateStr(-2)} with 3 days so far, got ${wk.start} / ${wk.dates.length}`);
+    const perfect = w.weeklyStats(w.getUserByUsername('perfectweek').id);
+    if(perfect.totalDays !== 3 || perfect.weeklyPct !== 100) throw new Error('perfectweek should be 3/3 = 100% in week 2, got ' + perfect.achievedDays + '/' + perfect.totalDays);
+    const lb = w.weeklyLeaderboard(w.allMembers().filter(m=>m.status==='active').map(m=>m.id));
+    const medalDays = lb.reduce((s,r)=>s+r.goldDays,0);
+    if(medalDays > 3) throw new Error('only 3 days of gold medals can exist in a 3-day week, got ' + medalDays);
+    let bad = false;
+    try{ await w.apiSend('PUT', '/settings', { startedOn: 'not-a-date' }); } catch(e){ bad = true; }
+    if(!bad) throw new Error('an invalid start date should be rejected');
   });
 
   console.log(JSON.stringify(results, null, 2));
