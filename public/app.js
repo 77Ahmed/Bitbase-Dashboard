@@ -1756,16 +1756,17 @@ function renderLeaderboard(u){
 
 function renderDirectory(u){
   return `
-    <div class="page-head"><div><h1>\ud83d\udc65 All Community Members</h1><div class="sub">Every active member \u2014 name, username, and X link</div></div></div>
+    <div class="page-head"><div><h1>\ud83d\udc65 All Community Members</h1><div class="sub">Every active member, A to Z \u2014 name, username, and X${u.role==='member'?'':' / WhatsApp'} links</div></div></div>
     <div class="card">
       <div class="directory-grid">
-        ${state.directory.map(d=>`<div class="directory-item">
+        ${state.directory.slice().sort(byDisplayName).map(d=>`<div class="directory-item">
           <div class="mini-avatar">${initials(d.displayName)}</div>
           <div style="flex:1;min-width:0;">
             <div style="font-weight:600;font-size:13.5px;"${memberLinkAttrs(d.id)}>${escapeHtml(d.displayName)}${monetizedBadge(d.monetized)}</div>
             <div class="muted" style="font-size:11.5px;">@${escapeHtml(d.username)}</div>
           </div>
           <a class="linkicon ${d.xUsername?'':'off'}" ${d.xUsername?`href="https://x.com/${encodeURIComponent(d.xUsername)}" target="_blank"`:''} title="X profile">\ud835\udd4a</a>
+          ${u.role==='member'?'':`<a class="linkicon ${d.whatsapp?'':'off'}" ${d.whatsapp?`href="https://wa.me/${d.whatsapp.replace(/\D/g,'')}" target="_blank"`:''} title="WhatsApp">\ud83d\udcac</a>`}
         </div>`).join('')}
       </div>
       ${!state.directory.length?`<div class="empty">No members yet.</div>`:''}
