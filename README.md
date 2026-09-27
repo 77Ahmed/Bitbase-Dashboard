@@ -38,11 +38,16 @@ bitbase-server/
 
   (That 15-point cutoff is a constant, `ORANGE_BAND`, near the top of
   `public/app.js` if you want it tighter or looser.)
-- Whoever tops the **weekly leaderboard** (most days finishing #1) is
-  eligible for a **Premium award**, given manually by an admin from the
-  Leaderboard page. The server enforces a **30-day cooldown per member** —
-  someone who already won Premium can't win it again for a month, though an
-  admin can explicitly override that if needed.
+- Whoever tops the **weekly leaderboard** (most Gold days, then Silver, then
+  Bronze) is eligible for a **Premium award**, given manually by an admin from
+  the Leaderboard page. A winner sits out the next 3 community weeks (won in
+  Week 1 -> eligible again from Week 5); they keep their leaderboard rank, and
+  the award form pre-selects the top *eligible* member. An admin can still
+  explicitly override the cooldown if needed.
+- A member whose **weekly activity is under 50%** (they met their own assigned
+  target on fewer than half of this week's days, once at least 3 days are
+  counted) sees a warning that they'll be removed if it stays below 50%;
+  admins and moderators see a flag on them.
 - **Payouts** (amount, monetized or non-monetary, a note) are tracked in
   `payouts.csv`. The dashboard shows the community's total payout, your own
   total and recent payouts, and the last Premium winner; each member's

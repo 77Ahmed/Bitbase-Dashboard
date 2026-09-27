@@ -490,3 +490,8 @@ td[data-label=""] .btn + .btn{margin-left:4px;}
   .podium-slot .ptally{font-size:10px;}
   .podium-slot .ptally .medal-tally{gap:2px;}
 }
+
+/* Low-activity removal warning */
+.warn-banner{display:flex;align-items:flex-start;gap:12px;border-color:#C9822C;background:linear-gradient(0deg,rgba(201,130,44,.10),rgba(201,130,44,.10)),var(--cloud);font-size:13.5px;line-height:1.45;}
+.warn-banner b{color:#C9822C;}
+.cell-user .badge{margin-left:6px;white-space:nowrap;}
