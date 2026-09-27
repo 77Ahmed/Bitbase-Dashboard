@@ -255,13 +255,19 @@ app.get('/api/state', (req, res) => {
 
   // Minimal public roster — every active member's name/username/X/target, visible to
   // the whole community regardless of role (not full profiles, no contact/status/permission data).
-  const directory = allMembers().filter(m=>m.status==='active').map(m => ({ id:m.id, displayName:m.displayName, username:m.username, xUsername:m.xUsername||'', assignedPercentage:m.assignedPercentage, monetized:!!m.monetized }));
+  // Admins and moderators also get each member's WhatsApp; members don't.
+  const canSeeContacts = viewer.role === 'admin' || viewer.role === 'moderator';
+  const directory = allMembers().filter(m=>m.status==='active')
+    .map(m => Object.assign({ id:m.id, displayName:m.displayName, username:m.username, xUsername:m.xUsername||'', assignedPercentage:m.assignedPercentage, monetized:!!m.monetized },
+      canSeeContacts ? { whatsapp: m.whatsapp||'' } : {}))
+    .sort((a,b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity:'base' }));
 
   res.json({
     authenticated: true,
     hasAdmin: true,
     session: { currentUserId: viewer.id },
-    users: visibleUsers.map(publicUser),
+    // Members only receive their own WhatsApp number, never anyone else's.
+    users: visibleUsers.map(publicUser).map(x => (canSeeContacts || x.id === viewer.id) ? x : Object.assign({}, x, { whatsapp: '' })),
     dailyActivity: visibleActivity,
     auditLogs: viewer.role==='member' ? [] : auditLogs,
     directory,
