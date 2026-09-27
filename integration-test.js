@@ -469,7 +469,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
   });
 
   // ---------- 20. Weekly activity = % of days target was met (7/7 = 100%) ----------
-  await tryAsync('weekly formula: 3 of 7 days meeting a 50% target = 42.9%, missing/0% days count as misses', async () => {
+  await tryAsync('weekly activity = average daily repost: 60,40,90,(missing),0,50,30 -> 38.6%, missing counts as 0%', async () => {
     await w.logout(); await wait(300);
     w.document.getElementById('loginUsername').value = 'admin';
     w.document.getElementById('loginPassword').value = 'admin123456';
@@ -490,10 +490,10 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     await w.fetchState();
     const ws = w.weeklyStats(id);
     if(ws.achievedDays !== 3) throw new Error('expected achievedDays=3, got ' + ws.achievedDays);
-    if(Math.abs(ws.weeklyPct - 42.9) > 0.1) throw new Error('expected weeklyPct\u224842.9, got ' + ws.weeklyPct);
+    if(Math.abs(ws.weeklyPct - 38.6) > 0.1) throw new Error('expected weeklyPct about 38.6 (270/7), got ' + ws.weeklyPct);
   });
 
-  await tryAsync('weekly formula: hitting target all 7 days = exactly 100%', async () => {
+  await tryAsync('weekly activity: 75% every day for 7 days = 75%', async () => {
     const created = await w.apiSend('POST', '/users', { role:'member', username:'perfectweek', password:'user123456', displayName:'Perfect Week', assignedPercentage:60 });
     const id = created.user.id;
     for(let off=-6; off<=0; off++){
@@ -502,7 +502,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     await w.fetchState();
     const ws = w.weeklyStats(id);
     if(ws.achievedDays !== 7) throw new Error('expected achievedDays=7, got ' + ws.achievedDays);
-    if(ws.weeklyPct !== 100) throw new Error('expected weeklyPct=100, got ' + ws.weeklyPct);
+    if(ws.weeklyPct !== 75) throw new Error('expected weeklyPct=75, got ' + ws.weeklyPct);
   });
 
   await tryAsync('a member added today has a 1-day week (no "Missing" days before they joined)', async () => {
@@ -512,9 +512,18 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     await w.fetchState();
     const ws = w.weeklyStats(id);
     if(ws.breakdown.length !== 1 || ws.totalDays !== 1) throw new Error('expected a 1-day week, got ' + ws.breakdown.length);
-    if(ws.weeklyPct !== 100) throw new Error('on target on their only day should be 100%, got ' + ws.weeklyPct);
+    if(ws.weeklyPct !== 60) throw new Error('60% on their only day should be a 60% week, got ' + ws.weeklyPct);
     w.state.ui.params = { dailyDate: w.dateStr(-2) }; w.state.ui.view = 'daily'; w.render(); await wait(50);
     if(html(w).includes('Joined Today')) throw new Error('Daily Reports for a date before they joined should not list them as Not reported');
+  });
+
+  await tryAsync('weekly activity for 36% and 59.5% (target 60%) is 47.8%, not 0%', async () => {
+    const created = await w.apiSend('POST', '/users', { role:'member', username:'lexcase', password:'user123456', displayName:'Lex Case', assignedPercentage:60 });
+    await w.apiSend('POST', '/activity', { userId:created.user.id, date:w.dateStr(-1), posts:null, manualPercentage:36, reason:'t' });
+    await w.apiSend('POST', '/activity', { userId:created.user.id, date:w.dateStr(0), posts:null, manualPercentage:59.5, reason:'t' });
+    await w.fetchState();
+    const ws = w.weeklyStats(created.user.id);
+    if(ws.weeklyPct !== 47.8) throw new Error('expected 47.8, got ' + ws.weeklyPct);
   });
 
   // ---------- 21. All Members / My Members toggle ----------
@@ -726,7 +735,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(wk.number !== 2) throw new Error('expected week 2, got ' + wk.number);
     if(wk.start !== w.dateStr(-2) || wk.dates.length !== 3) throw new Error(`expected week to start ${w.dateStr(-2)} with 3 days so far, got ${wk.start} / ${wk.dates.length}`);
     const perfect = w.weeklyStats(w.getUserByUsername('perfectweek').id);
-    if(perfect.totalDays !== 3 || perfect.weeklyPct !== 100) throw new Error('perfectweek should be 3/3 = 100% in week 2, got ' + perfect.achievedDays + '/' + perfect.totalDays);
+    if(perfect.totalDays !== 3 || perfect.weeklyPct !== 75) throw new Error('perfectweek should average 75% over 3 days in week 2, got ' + perfect.weeklyPct + ' over ' + perfect.totalDays);
     const lb = w.weeklyLeaderboard(w.allMembers().filter(m=>m.status==='active').map(m=>m.id));
     const medalDays = lb.reduce((s,r)=>s+r.goldDays,0);
     if(medalDays > 3) throw new Error('only 3 days of gold medals can exist in a 3-day week, got ' + medalDays);
@@ -802,20 +811,20 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
   });
 
   await tryAsync('weekly activity under 50% (after 3+ days) -> removal warning for the member, flagged for admins', async () => {
-    // Target 60%: met it on 1 of 3 days -> weekly 33.3% -> warned.
+    // 70, 40, 25 -> average 45% -> under 50% -> warned.
     const created = await w.apiSend('POST', '/users', { role:'member', username:'lowguy', password:'user123456', displayName:'Low Guy', assignedPercentage:60 });
     const id = created.user.id;
     for(const [off,pct] of [[-2,70],[-1,40],[0,25]]) await w.apiSend('POST', '/activity', { userId:id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
-    // Target 20%: reposts 30/45/25 are all under 50% but all meet the 20% target -> weekly 100% -> NOT warned.
-    const ok = await w.apiSend('POST', '/users', { role:'member', username:'lowtarget', password:'user123456', displayName:'Low Target', assignedPercentage:20 });
-    for(const [off,pct] of [[-2,30],[-1,45],[0,25]]) await w.apiSend('POST', '/activity', { userId:ok.user.id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
+    // 55, 65, 50 -> average 56.7% -> NOT warned (even though two days are under their 60% target).
+    const ok = await w.apiSend('POST', '/users', { role:'member', username:'goodavg', password:'user123456', displayName:'Good Average', assignedPercentage:60 });
+    for(const [off,pct] of [[-2,55],[-1,65],[0,50]]) await w.apiSend('POST', '/activity', { userId:ok.user.id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
     // Only 2 days counted so far, both missed -> 0% but too early to warn.
     const early = await w.apiSend('POST', '/users', { role:'member', username:'earlybird', password:'user123456', displayName:'Early Bird', assignedPercentage:50 });
     for(const [off,pct] of [[-1,10],[0,10]]) await w.apiSend('POST', '/activity', { userId:early.user.id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
     await w.fetchState();
     const warn = w.lowActivityWarning(id);
-    if(!warn || Math.abs(warn.weeklyPct - 33.3) > 0.1) throw new Error('expected Low Guy warned at 33.3%, got ' + JSON.stringify(warn));
-    if(w.lowActivityWarning(ok.user.id)) throw new Error('Low Target meets their own 20% target every day, so should not be warned');
+    if(!warn || Math.abs(warn.weeklyPct - 45) > 0.1) throw new Error('expected Low Guy warned at 45%, got ' + JSON.stringify(warn));
+    if(w.lowActivityWarning(ok.user.id)) throw new Error('Good Average averages 56.7%, so should not be warned');
     if(w.lowActivityWarning(early.user.id)) throw new Error('fewer than 3 days counted should not warn yet');
     w.goto('dashboard'); await wait(50);
     if(!html(w).includes('under 50% weekly activity') || !html(w).includes('Low Guy')) throw new Error('admin dashboard should list Low Guy as at risk');
