@@ -753,6 +753,29 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     }
   });
 
+  // ---------- 27. All Community Members: A to Z, WhatsApp for admin/mod only ----------
+  await tryAsync('directory is A to Z; admin sees WhatsApp links, a member neither sees nor receives others’ numbers', async () => {
+    const tanvirId = w.getUserByUsername('tanvir').id;
+    await w.apiSend('PUT', '/users/'+tanvirId, { whatsapp: '923001112233' });
+    await w.fetchState();
+    w.goto('directory'); await wait(50);
+    const names = Array.from(w.document.querySelectorAll('.directory-item > div:nth-child(2) > div:first-child')).map(e=>e.textContent.trim());
+    const sorted = names.slice().sort((a,b)=>a.localeCompare(b, undefined, { sensitivity:'base' }));
+    if(!names.length || names.join('|') !== sorted.join('|')) throw new Error('directory not A-Z: ' + names.join(', '));
+    if(!html(w).includes('https://wa.me/923001112233')) throw new Error('admin should see tanvir’s WhatsApp link in the directory');
+
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'lisa';
+    w.document.getElementById('loginPassword').value = 'user123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    w.goto('directory'); await wait(50);
+    if(html(w).includes('title="WhatsApp"')) throw new Error('a member should not see WhatsApp links in the directory');
+    const leaked = w.state.users.filter(x => x.id !== w.state.session.currentUserId && x.whatsapp);
+    if(leaked.length) throw new Error('a member received other people’s WhatsApp numbers: ' + leaked.map(x=>x.username).join(', '));
+    if(w.state.directory.some(d => d.whatsapp !== undefined)) throw new Error('a member’s directory data should not include WhatsApp');
+  });
+
   console.log(JSON.stringify(results, null, 2));
   const fails = results.filter(r => r[1].startsWith('FAIL'));
   console.log('\nTOTAL:', results.length, ' FAILS:', fails.length);
