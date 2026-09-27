@@ -3,11 +3,27 @@
 
 const THEME_KEY = 'bitbase_theme'; // per-browser UI preference only — not account data
 
-function dateStr(offsetDays){
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0,10);
+/* ---------------- "Today" = the latest uploaded report day ----------------
+   Each day's data is uploaded at 1 AM the next morning, so "today" everywhere in
+   the app is yesterday's date until 1 AM, then it moves forward a day
+   (Sep 27 all day -> shows Sep 26; Sep 28 from 1:00 AM -> shows Sep 27).
+   Dates are worked out in the community's timezone (Settings), not the device's. */
+const REPORT_ROLLOVER_HOUR = 1;
+
+function communityTimezone(){ return (state && state.settings && state.settings.timezone) || 'Asia/Karachi'; }
+// YYYY-MM-DD of a moment, as a calendar date in the community's timezone.
+function ymdInZone(d){
+  try{ return new Intl.DateTimeFormat('en-CA', { timeZone: communityTimezone(), year:'numeric', month:'2-digit', day:'2-digit' }).format(d); }
+  catch(e){ return d.toISOString().slice(0,10); } // unknown timezone name -> fall back to UTC
 }
+function reportDay(){ return ymdInZone(new Date(Date.now() - (24 + REPORT_ROLLOVER_HOUR) * 3600000)); }
+// The real calendar date right now (used for payout dates, which aren't tied to report days).
+function calendarToday(){ return ymdInZone(new Date()); }
+
+function latestReportNote(){ return `Latest report: ${fmtDate(reportDay())} · updates daily at 1 AM`; }
+
+// Report day offset by N days: dateStr(0) = latest report day, dateStr(-1) = the day before.
+function dateStr(offsetDays){ return addDaysIso(reportDay(), offsetDays || 0); }
 function fmtDate(iso){
   const d = new Date(iso + 'T00:00:00');
   return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
@@ -206,7 +222,7 @@ function effectivePercentage(rec){
 // if an admin back-filled activity for them before that.
 function memberStartDate(userId){
   const member = getUser(userId);
-  let start = member && member.createdAt ? new Date(member.createdAt).toISOString().slice(0,10) : null;
+  let start = member && member.createdAt ? ymdInZone(new Date(member.createdAt)) : null;
   state.dailyActivity.forEach(r => { if(r.userId === userId && (!start || r.date < start)) start = r.date; });
   return start;
 }
@@ -224,7 +240,7 @@ function communityStartDate(){
   // Older installs: fall back to when the first admin account was created.
   const admins = state.users.filter(u => u.role === 'admin' && u.createdAt);
   if(!admins.length) return null;
-  return new Date(Math.min.apply(null, admins.map(a => a.createdAt))).toISOString().slice(0,10);
+  return ymdInZone(new Date(Math.min.apply(null, admins.map(a => a.createdAt))));
 }
 
 // { number, start, end, dates } for the week containing today; `dates` stops at today.
@@ -675,7 +691,7 @@ function renderRoleDashboard(u){
 
   return `
     <div class="page-head">
-      <div><h1>Welcome, ${escapeHtml(u.displayName)} \ud83d\udc4b</h1><div class="sub">${escapeHtml(state.settings.communityName)} \u00b7 ${fmtDate(today)}</div></div>
+      <div><h1>Welcome, ${escapeHtml(u.displayName)} \ud83d\udc4b</h1><div class="sub">${escapeHtml(state.settings.communityName)} \u00b7 ${latestReportNote()}</div></div>
     </div>
     <div class="grid-stats">${statCards}</div>
 
@@ -749,7 +765,7 @@ function renderMemberDashboard(u){
   const py = state.payouts;
 
   return `
-    <div class="page-head"><div><h1>Welcome, ${escapeHtml(u.displayName)} \ud83d\udc4b</h1><div class="sub">${fmtDate(today)}</div></div></div>
+    <div class="page-head"><div><h1>Welcome, ${escapeHtml(u.displayName)} \ud83d\udc4b</h1><div class="sub">${latestReportNote()}</div></div></div>
 
     <div class="dash-hero">
     <div class="card profile-card">
@@ -1791,7 +1807,7 @@ function openPayoutModal(opts){
         </div>
         <div class="field-row">
           <div class="field"><label>Amount ($, negative to correct down)</label><input id="pyAmount" type="number" step="0.01" value="${editing?editing.amount:0}" /></div>
-          <div class="field"><label>Date</label><input id="pyDate" type="date" value="${editing?editing.date:dateStr(0)}" max="${dateStr(0)}" /></div>
+          <div class="field"><label>Date</label><input id="pyDate" type="date" value="${editing?editing.date:calendarToday()}" max="${calendarToday()}" /></div>
         </div>
         <div class="check-row"><input type="checkbox" id="pyMonetized" ${editing?(editing.monetized?'checked':''):''} /> This is a real monetary payout (uncheck for a non-monetary badge/record)</div>
         <div class="field"><label>Note (optional)</label><input id="pyNote" placeholder="e.g. Week of Sep 22 winner" value="${editing?escapeHtml(editing.note||''):''}" /></div>
@@ -1852,7 +1868,7 @@ function openFundModal(opts){
       <form onsubmit="return submitFund(event${editing?`,'${editing.id}'`:''})">
         <div class="field-row">
           <div class="field"><label>Amount ($, negative to correct down)</label><input id="fundAmount" type="number" step="0.01" required value="${editing?editing.amount:''}" placeholder="e.g. 100" /></div>
-          <div class="field"><label>Date</label><input id="fundDate" type="date" value="${editing?editing.date:dateStr(0)}" max="${dateStr(0)}" /></div>
+          <div class="field"><label>Date</label><input id="fundDate" type="date" value="${editing?editing.date:calendarToday()}" max="${calendarToday()}" /></div>
         </div>
         <div class="field"><label>Note (optional)</label><input id="fundNote" placeholder="e.g. Sponsor contribution" value="${editing?escapeHtml(editing.note||''):''}" /></div>
         <div class="modal-actions">
