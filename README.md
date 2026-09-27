@@ -44,10 +44,11 @@ bitbase-server/
   Week 1 -> eligible again from Week 5); they keep their leaderboard rank, and
   the award form pre-selects the top *eligible* member. An admin can still
   explicitly override the cooldown if needed.
-- A member whose **weekly activity is under 50%** (they met their own assigned
-  target on fewer than half of this week's days, once at least 3 days are
-  counted) sees a warning that they'll be removed if it stays below 50%;
-  admins and moderators see a flag on them.
+- **Weekly activity** is a member's average daily repost % over the current
+  community week (days since they joined; a day with no report counts as 0%),
+  shown against their assigned target. If it's **under 50%** once at least 3
+  days are counted, they see a warning that they'll be removed if it stays
+  below 50%; admins and moderators see a flag on them.
 - **Payouts** (amount, monetized or non-monetary, a note) are tracked in
   `payouts.csv`. The dashboard shows the community's total payout, your own
   total and recent payouts, and the last Premium winner; each member's
