@@ -130,6 +130,13 @@ function dateStr(offsetDays){
   d.setDate(d.getDate() + (offsetDays||0));
   return d.toISOString().slice(0,10);
 }
+// The latest uploaded report day, same rule as the frontend: data for a day is uploaded
+// at 1 AM the next morning, in the community's timezone.
+function reportDayStr(){
+  const at = new Date(Date.now() - 25 * 3600000);
+  try{ return new Intl.DateTimeFormat('en-CA', { timeZone: settings.timezone || 'Asia/Karachi', year:'numeric', month:'2-digit', day:'2-digit' }).format(at); }
+  catch(e){ return at.toISOString().slice(0,10); }
+}
 function last7Dates(endOffset){
   const arr = [];
   for(let i=6;i>=0;i--) arr.push(dateStr((endOffset||0)-i));
@@ -278,7 +285,7 @@ app.post('/api/setup', (req, res) => {
   users.push(admin);
   persistUsers();
   settings.communityName = (communityName || '').trim() || 'My Community';
-  settings.startedOn = dateStr(0); // community weeks are counted in 7-day blocks from this day
+  settings.startedOn = reportDayStr(); // community weeks are counted in 7-day blocks from the first report day
   persistSettings();
   logAudit(admin.displayName, `Created the community and the first Admin account (@${admin.username})`, '');
   const token = createSession(admin.id);

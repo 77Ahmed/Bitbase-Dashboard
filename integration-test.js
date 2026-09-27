@@ -735,6 +735,24 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(!bad) throw new Error('an invalid start date should be rejected');
   });
 
+  // ---------- 26. "Today" = latest report day, rolling over at 1 AM community time ----------
+  await tryAsync('report day stays on the 26th until 1 AM on the 28th (Asia/Karachi), then moves to the 27th', async () => {
+    const realNow = w.Date.now;
+    const at = iso => () => Date.parse(iso);
+    try{
+      w.state.settings.timezone = 'Asia/Karachi'; // UTC+5
+      w.Date.now = at('2026-09-27T05:00:00Z'); // Sep 27, 10:00 AM PKT
+      if(w.reportDay() !== '2026-09-26') throw new Error('Sep 27 daytime should show the 26th, got ' + w.reportDay());
+      w.Date.now = at('2026-09-27T19:59:00Z'); // Sep 28, 12:59 AM PKT
+      if(w.reportDay() !== '2026-09-26') throw new Error('just before 1 AM should still show the 26th, got ' + w.reportDay());
+      w.Date.now = at('2026-09-27T20:00:00Z'); // Sep 28, 1:00 AM PKT
+      if(w.reportDay() !== '2026-09-27') throw new Error('from 1 AM on the 28th it should show the 27th, got ' + w.reportDay());
+      if(w.dateStr(0) !== '2026-09-27' || w.dateStr(-1) !== '2026-09-26') throw new Error('dateStr should be relative to the report day');
+    }finally{
+      w.Date.now = realNow;
+    }
+  });
+
   console.log(JSON.stringify(results, null, 2));
   const fails = results.filter(r => r[1].startsWith('FAIL'));
   console.log('\nTOTAL:', results.length, ' FAILS:', fails.length);
