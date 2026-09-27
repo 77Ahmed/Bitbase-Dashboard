@@ -610,7 +610,17 @@ app.post('/api/activity/import', requireAuth, (req, res) => {
 
 /* ===== Payouts (weekly Premium awards + any other recorded payout) ===== */
 
-const PREMIUM_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// A Premium winner can't win again for the next 3 community weeks: won in Week 1 -> eligible
+// again from Week 5. Weeks are 7-day blocks from settings.startedOn (same as the frontend).
+const PREMIUM_COOLDOWN_WEEKS = 4;
+const DAY_MS = 24 * 60 * 60 * 1000;
+function premiumEligibleOn(lastWonDate){
+  const won = Date.parse(lastWonDate);
+  const start = settings.startedOn ? Date.parse(settings.startedOn) : NaN;
+  if(isNaN(start)) return new Date(won + PREMIUM_COOLDOWN_WEEKS * 7 * DAY_MS).toISOString().slice(0,10);
+  const weekIndex = Math.floor((won - start) / DAY_MS / 7);
+  return new Date(start + (weekIndex + PREMIUM_COOLDOWN_WEEKS) * 7 * DAY_MS).toISOString().slice(0,10);
+}
 
 function payoutWithUser(p){
   if(p.type === 'community') return Object.assign({}, p, { displayName: 'Community fund', username: '' });
@@ -664,9 +674,8 @@ app.post('/api/payouts', requireAuth, requireAdmin, (req, res) => {
     const priorPremiums = payouts.filter(p=>p.userId===userId && p.type==='premium');
     if(priorPremiums.length){
       const mostRecent = priorPremiums.reduce((a,b)=> a.date > b.date ? a : b);
-      const gapMs = new Date(payDate) - new Date(mostRecent.date);
-      if(gapMs < PREMIUM_COOLDOWN_MS){
-        const eligibleOn = new Date(new Date(mostRecent.date).getTime() + PREMIUM_COOLDOWN_MS).toISOString().slice(0,10);
+      const eligibleOn = premiumEligibleOn(mostRecent.date);
+      if(payDate < eligibleOn){
         res.status(409).json({ error: 'cooldown_active', eligibleOn, lastAwardedOn: mostRecent.date });
         return;
       }

@@ -776,6 +776,64 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(w.state.directory.some(d => d.whatsapp !== undefined)) throw new Error('a member’s directory data should not include WhatsApp');
   });
 
+  // ---------- 28. Premium cooldown = 4 community weeks; low-activity warning ----------
+  await tryAsync('Premium won in Week 1 blocks Weeks 2-4 and is allowed again from Week 5', async () => {
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'admin';
+    w.document.getElementById('loginPassword').value = 'admin123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    const before = (await w.apiGet('/state')).settings.startedOn;
+    await w.apiSend('PUT', '/settings', { startedOn: '2026-01-01' }); // Week 1 = Jan 1-7, Week 5 starts Jan 29
+    const id = w.getUserByUsername('perfectweek').id;
+    try{
+      await w.apiSend('POST', '/payouts', { userId:id, amount:10, monetized:true, type:'premium', date:'2026-01-03', note:'cooldown test' });
+      let blocked = null;
+      try{ await w.apiSend('POST', '/payouts', { userId:id, amount:10, monetized:true, type:'premium', date:'2026-01-28' }); }
+      catch(err){ blocked = err.data; }
+      if(!blocked || blocked.error !== 'cooldown_active') throw new Error('a Week 4 award should be blocked');
+      if(blocked.eligibleOn !== '2026-01-29') throw new Error('eligible date should be the start of Week 5 (2026-01-29), got ' + blocked.eligibleOn);
+      const ok = await w.apiSend('POST', '/payouts', { userId:id, amount:10, monetized:true, type:'premium', date:'2026-01-29', note:'cooldown test' });
+      if(!ok.payout) throw new Error('a Week 5 award should be allowed');
+    }finally{
+      await w.apiSend('PUT', '/settings', { startedOn: before });
+      await w.fetchState();
+    }
+  });
+
+  await tryAsync('weekly activity under 50% (after 3+ days) -> removal warning for the member, flagged for admins', async () => {
+    // Target 60%: met it on 1 of 3 days -> weekly 33.3% -> warned.
+    const created = await w.apiSend('POST', '/users', { role:'member', username:'lowguy', password:'user123456', displayName:'Low Guy', assignedPercentage:60 });
+    const id = created.user.id;
+    for(const [off,pct] of [[-2,70],[-1,40],[0,25]]) await w.apiSend('POST', '/activity', { userId:id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
+    // Target 20%: reposts 30/45/25 are all under 50% but all meet the 20% target -> weekly 100% -> NOT warned.
+    const ok = await w.apiSend('POST', '/users', { role:'member', username:'lowtarget', password:'user123456', displayName:'Low Target', assignedPercentage:20 });
+    for(const [off,pct] of [[-2,30],[-1,45],[0,25]]) await w.apiSend('POST', '/activity', { userId:ok.user.id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
+    // Only 2 days counted so far, both missed -> 0% but too early to warn.
+    const early = await w.apiSend('POST', '/users', { role:'member', username:'earlybird', password:'user123456', displayName:'Early Bird', assignedPercentage:50 });
+    for(const [off,pct] of [[-1,10],[0,10]]) await w.apiSend('POST', '/activity', { userId:early.user.id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
+    await w.fetchState();
+    const warn = w.lowActivityWarning(id);
+    if(!warn || Math.abs(warn.weeklyPct - 33.3) > 0.1) throw new Error('expected Low Guy warned at 33.3%, got ' + JSON.stringify(warn));
+    if(w.lowActivityWarning(ok.user.id)) throw new Error('Low Target meets their own 20% target every day, so should not be warned');
+    if(w.lowActivityWarning(early.user.id)) throw new Error('fewer than 3 days counted should not warn yet');
+    w.goto('dashboard'); await wait(50);
+    if(!html(w).includes('under 50% weekly activity') || !html(w).includes('Low Guy')) throw new Error('admin dashboard should list Low Guy as at risk');
+    w.goto('weekly'); await wait(50);
+    if(!html(w).includes('under 50%</span>')) throw new Error('Weekly Reports should flag Low Guy');
+    const pw = w.getUserByUsername('perfectweek').id;
+    if(w.lowActivityWarning(pw)) throw new Error('perfectweek (75% every day) should not be warned');
+
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'lowguy';
+    w.document.getElementById('loginPassword').value = 'user123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    if(!html(w).includes('You will be removed if your weekly activity stays below 50%')) throw new Error('member dashboard should show the removal warning');
+    w.goto('weekly'); await wait(50);
+    if(!html(w).includes('You will be removed')) throw new Error('My Weekly Activity should show the removal warning');
+  });
+
   console.log(JSON.stringify(results, null, 2));
   const fails = results.filter(r => r[1].startsWith('FAIL'));
   console.log('\nTOTAL:', results.length, ' FAILS:', fails.length);

@@ -260,6 +260,56 @@ function weekLabel(){
   return `Week ${w.number} · ${fmtDateShort(w.start)} – ${fmtDateShort(w.end)}`;
 }
 
+/* ---------------- Premium cooldown ----------------
+   A Premium winner sits out the next 3 community weeks (won in Week 1 -> eligible
+   from Week 5). They keep their leaderboard rank; the admin picks the winner by hand.
+   Mirrors premiumEligibleOn() in server.js, which enforces it. */
+const PREMIUM_COOLDOWN_WEEKS = 4;
+function premiumEligibleOn(lastWonDate){
+  const start = communityStartDate();
+  if(!start) return addDaysIso(lastWonDate, PREMIUM_COOLDOWN_WEEKS * 7);
+  const weekIndex = Math.floor((isoToUtcMs(lastWonDate) - isoToUtcMs(start)) / 86400000 / 7);
+  return addDaysIso(start, (weekIndex + PREMIUM_COOLDOWN_WEEKS) * 7);
+}
+// null if the member has never won Premium (as far as this viewer can see — admins see every payout).
+function premiumCooldown(userId){
+  const wins = (state.payouts.scoped || []).filter(p => p.userId === userId && p.type === 'premium');
+  if(!wins.length) return null;
+  const last = wins.reduce((a,b) => a.date > b.date ? a : b);
+  const eligibleOn = premiumEligibleOn(last.date);
+  return { lastWon: last.date, eligibleOn, onCooldown: calendarToday() < eligibleOn };
+}
+
+function premiumCooldownTagHtml(userId){
+  const c = premiumCooldown(userId);
+  return c && c.onCooldown ? ` <span class="badge gold" title="Won Premium ${fmtDate(c.lastWon)} — can win again from ${fmtDate(c.eligibleOn)}">🌟 cooldown till ${fmtDateShort(c.eligibleOn)}</span>` : '';
+}
+
+/* ---------------- Low-activity warning ----------------
+   Weekly % (days on the member's own assigned target) under 50%, once at least
+   3 days of the week are counted (so one missed first day isn't a warning)
+   -> "you will be removed if your weekly activity stays below 50%". */
+const LOW_WEEKLY_PCT = 50;
+const MIN_DAYS_FOR_WARNING = 3;
+function lowActivityWarning(userId){
+  const ws = weeklyStats(userId);
+  if(ws.totalDays < MIN_DAYS_FOR_WARNING || ws.weeklyPct >= LOW_WEEKLY_PCT) return null;
+  return { weeklyPct: ws.weeklyPct, achievedDays: ws.achievedDays, totalDays: ws.totalDays, assignedPct: ws.assignedPct };
+}
+function lowActivityBannerHtml(userId, isSelf){
+  const w = lowActivityWarning(userId);
+  if(!w) return '';
+  return `<div class="card warn-banner">
+    <div style="font-size:22px;">⚠️</div>
+    <div><b>Warning: ${isSelf?'your':'this member’s'} weekly activity is ${fmtPct(w.weeklyPct)} — ${isSelf?'you':'they'} met ${isSelf?'your':'their'} ${fmtPct(w.assignedPct)} target on ${w.achievedDays} of ${w.totalDays} days this week.</b>
+    <div style="margin-top:2px;">${isSelf?'You':'They'} will be removed if ${isSelf?'your':'their'} weekly activity stays below ${LOW_WEEKLY_PCT}%.</div></div>
+  </div>`;
+}
+function lowActivityFlagHtml(userId){
+  const w = lowActivityWarning(userId);
+  return w ? ` <span class="badge inactive" title="Weekly activity under ${LOW_WEEKLY_PCT}%: met target on ${w.achievedDays} of ${w.totalDays} days">⚠ under ${LOW_WEEKLY_PCT}%</span>` : '';
+}
+
 function weeklyStats(userId){
   // A member's week only covers days since they joined — no "Missing" rows for days before that.
   const start = memberStartDate(userId);
@@ -688,6 +738,9 @@ function renderRoleDashboard(u){
   // Same community-wide medal table as the Leaderboard page (medals are won against everyone, not just a moderator's group).
   const topRows = weeklyLeaderboard(allMembers().filter(m=>m.status==='active').map(m=>m.id)).slice(0,5);
   const recentLogs = state.auditLogs.slice(0,6);
+  const atRisk = scope.map(getUser).filter(m=>m && m.status==='active')
+    .map(m=>{ const w = lowActivityWarning(m.id); return w ? { id:m.id, name:m.displayName, weeklyPct:w.weeklyPct } : null; })
+    .filter(Boolean).sort((a,b)=>a.weeklyPct-b.weeklyPct || a.name.localeCompare(b.name));
 
   return `
     <div class="page-head">
@@ -707,6 +760,12 @@ function renderRoleDashboard(u){
     ${missingToday.length ? `<div class="card" style="border-color:var(--danger);">
       <h3 style="color:var(--danger)">\u26a0\ufe0f ${missingToday.length} member${missingToday.length>1?'s':''} missing today's report</h3>
       <div class="muted" style="font-size:13px;">${missingToday.map(id=>escapeHtml(getUser(id).displayName)).join(', ')}</div>
+    </div>` : ''}
+
+    ${atRisk.length ? `<div class="card" style="border-color:#C9822C;">
+      <h3 style="color:#C9822C">⚠️ ${atRisk.length} member${atRisk.length>1?'s':''} under ${LOW_WEEKLY_PCT}% weekly activity</h3>
+      <div class="muted" style="font-size:13px;margin-bottom:8px;">They've been shown the removal warning.</div>
+      <div class="toolbar">${atRisk.map(a=>`<span class="badge inactive"${memberLinkAttrs(a.id)}>${escapeHtml(a.name)} · ${fmtPct(a.weeklyPct)}</span>`).join('')}</div>
     </div>` : ''}
 
     <div class="card">
@@ -766,6 +825,7 @@ function renderMemberDashboard(u){
 
   return `
     <div class="page-head"><div><h1>Welcome, ${escapeHtml(u.displayName)} \ud83d\udc4b</h1><div class="sub">${latestReportNote()}</div></div></div>
+    ${lowActivityBannerHtml(u.id, true)}
 
     <div class="dash-hero">
     <div class="card profile-card">
@@ -855,6 +915,7 @@ function renderMemberWeekly(u){
   const ws = weeklyStats(u.id);
   return `
     <div class="page-head"><div><h1>My Weekly Activity</h1><div class="sub">${weekLabel()} \u00b7 % of days I met my ${fmtPct(u.assignedPercentage)} target \u2014 only days since I joined count</div></div></div>
+    ${lowActivityBannerHtml(u.id, true)}
     <div class="card" style="max-width:420px;text-align:center;">
       <div class="label muted" style="margin-bottom:6px;">Weekly Activity</div>
       <div style="font-size:34px;font-weight:700;color:var(--sky-deep);">${fmtPct(ws.weeklyPct)}</div>
@@ -1604,7 +1665,7 @@ function renderWeeklyReports(u){
         return `<tr>
         <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.m.id)}>${statusDot(st)}<div class="mini-avatar">${initials(r.m.displayName)}</div>${escapeHtml(r.m.displayName)}${monetizedBadge(r.m.monetized)}</div></td>
         <td data-label="Today">${pctVsAssignedHtml(r.todayPct, r.m.assignedPercentage)}</td>
-        <td data-label="Weekly"><div class="pbar" style="display:inline-block;width:80px;vertical-align:middle;"><span style="width:${r.ws.weeklyPct}%"></span></div> ${fmtPct(r.ws.weeklyPct)}</td>
+        <td data-label="Weekly"><div class="pbar" style="display:inline-block;width:80px;vertical-align:middle;"><span style="width:${r.ws.weeklyPct}%"></span></div> ${fmtPct(r.ws.weeklyPct)}${lowActivityFlagHtml(r.m.id)}</td>
         <td data-label=""><button class="btn btn-outline btn-sm" onclick="goto('memberDetail',{userId:'${r.m.id}'})">View \u2192</button></td>
       </tr>`;
       }).join('')}
@@ -1635,6 +1696,7 @@ function renderMemberDetail(u, memberId){
         <a class="link-btn ${m.whatsapp?'':'off'}" ${m.whatsapp?`href="https://wa.me/${m.whatsapp.replace(/\D/g,'')}" target="_blank"`:''}>\ud83d\udcac WhatsApp</a>
       </div>
     </div>
+    ${lowActivityBannerHtml(memberId, u.id === memberId)}
     <div class="grid-stats">
       <div class="stat-card"><div class="label">Weekly Activity</div><div class="value blue">${fmtPct(ws.weeklyPct)}</div></div>
       <div class="stat-card"><div class="label">Days Reported</div><div class="value">${ws.daysReported}/${ws.totalDays}</div></div>
@@ -1740,7 +1802,7 @@ function renderLeaderboard(u){
           <td data-label="This Week">${medalTallyHtml(weekById[r.userId])}</td>
         </tr>`:`<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
-          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(rowStatus(r))}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(rowStatus(r))}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}${isAdmin?premiumCooldownTagHtml(r.userId):''}</div></td>
           <td data-label="Gold"><b>${r.goldDays}</b></td>
           <td data-label="Silver">${r.silverDays}</td>
           <td data-label="Bronze">${r.bronzeDays}</td>
@@ -1785,10 +1847,15 @@ function openPayoutModal(opts){
   let presetType = opts.presetType || (editing ? editing.type : 'bonus');
   let winnerNote = '';
   if(presetType==='premium' && !editing){
+    // Ranks stay as they are; pre-select the highest-ranked member who isn't on Premium cooldown.
     const wRank = weeklyLeaderboard(members.map(m=>m.id));
-    const defaultWinner = wRank[0];
-    if(defaultWinner && !presetUserId){ presetUserId = defaultWinner.userId; winnerNote = ' \u2014 this week\u2019s #1'; }
+    const defaultWinner = wRank.find(r => { const c = premiumCooldown(r.userId); return !c || !c.onCooldown; });
+    if(defaultWinner && !presetUserId){
+      presetUserId = defaultWinner.userId;
+      winnerNote = defaultWinner.rank === 1 ? ' \u2014 this week\u2019s #1' : ` \u2014 #${defaultWinner.rank}, top eligible this week`;
+    }
   }
+  const cooldownNote = id => { const c = premiumCooldown(id); return c && c.onCooldown ? ` (Premium cooldown until ${fmtDateShort(c.eligibleOn)})` : ''; };
   openModal(`
     <div class="modal">
       <h2>${editing?'Edit Payout':'Add Payout'}</h2>
@@ -1802,7 +1869,7 @@ function openPayoutModal(opts){
           </div>
           <div class="field"><label>Member</label>
             <select id="pyMember" ${editing?'disabled':''}>
-              ${members.map(m=>`<option value="${m.id}" ${presetUserId===m.id?'selected':''}>${escapeHtml(m.displayName)}${presetUserId===m.id?winnerNote:''}</option>`).join('')}
+              ${members.map(m=>`<option value="${m.id}" ${presetUserId===m.id?'selected':''}>${escapeHtml(m.displayName)}${presetUserId===m.id?winnerNote:''}${presetType==='premium'?cooldownNote(m.id):''}</option>`).join('')}
             </select>
           </div>
         </div>
@@ -1843,7 +1910,7 @@ async function submitPayout(e, payoutId, override){
   }catch(err){
     if(err.data && err.data.error === 'cooldown_active'){
       const box = document.getElementById('payoutWarnBox');
-      box.innerHTML = `<div class="login-error">This member already won Premium on ${escapeHtml(err.data.lastAwardedOn)} \u2014 not eligible again until ${escapeHtml(err.data.eligibleOn)} (once-a-month limit). <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="submitPayout(event, ${payoutId?`'${payoutId}'`:null}, true)">Add anyway</button></div>`;
+      box.innerHTML = `<div class="login-error">This member already won Premium on ${escapeHtml(err.data.lastAwardedOn)} \u2014 not eligible again until ${escapeHtml(err.data.eligibleOn)} (a Premium winner sits out the next 3 weeks). <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="submitPayout(event, ${payoutId?`'${payoutId}'`:null}, true)">Add anyway</button></div>`;
     }else{
       toast(err.message, true);
     }
