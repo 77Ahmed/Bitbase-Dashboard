@@ -29,7 +29,7 @@ const SETTINGS_JSON = path.join(DATA_DIR, 'settings.json');
 const SETUP_KEY = process.env.SETUP_KEY || '';
 
 const USER_COLUMNS = ['id','username','password_hash','display_name','role','status','x_username','whatsapp','moderator_id','assigned_percentage','monetized','permissions_json','created_at'];
-const ACTIVITY_COLUMNS = ['id','user_id','date','posts','manual_percentage','reason','source','created_by','updated_by','created_at','updated_at'];
+const ACTIVITY_COLUMNS = ['id','user_id','date','posts','quality_reposts','manual_percentage','reason','source','created_by','updated_by','created_at','updated_at'];
 const AUDIT_COLUMNS = ['id','time','actor','action','target_name'];
 const PAYOUT_COLUMNS = ['id','user_id','date','amount','monetized','type','note','awarded_by','created_at'];
 
@@ -74,11 +74,14 @@ function userToRow(u){
 }
 function rowToActivity(r){
   return { id:r.id, userId:r.user_id, date:r.date, posts: r.posts===''?null:Number(r.posts),
+    // quality_reposts was added later — older files don't have the column at all.
+    qualityReposts: r.quality_reposts===undefined||r.quality_reposts===''?null:Number(r.quality_reposts),
     manualPercentage: r.manual_percentage===''?null:Number(r.manual_percentage), reason: r.reason || null, source: r.source,
     createdBy: r.created_by, updatedBy: r.updated_by, createdAt: Number(r.created_at), updatedAt: Number(r.updated_at) };
 }
 function activityToRow(a){
   return { id:a.id, user_id:a.userId, date:a.date, posts: a.posts===null||a.posts===undefined?'':a.posts,
+    quality_reposts: a.qualityReposts===null||a.qualityReposts===undefined?'':a.qualityReposts,
     manual_percentage: a.manualPercentage===null||a.manualPercentage===undefined?'':a.manualPercentage,
     reason:a.reason||'', source:a.source, created_by:a.createdBy, updated_by:a.updatedBy, created_at:a.createdAt, updated_at:a.updatedAt };
 }
@@ -525,7 +528,7 @@ app.post('/api/activity', requireAuth, (req, res) => {
     rec.posts = postsVal; rec.manualPercentage = manualVal; rec.reason = reason || null;
     rec.source = 'manual'; rec.updatedBy = actor.displayName; rec.updatedAt = Date.now();
   }else{
-    rec = { id: uid('a'), userId, date, posts: postsVal, manualPercentage: manualVal, reason: reason||null,
+    rec = { id: uid('a'), userId, date, posts: postsVal, qualityReposts: null, manualPercentage: manualVal, reason: reason||null,
       source: 'manual', createdBy: actor.displayName, updatedBy: actor.displayName, createdAt: Date.now(), updatedAt: Date.now() };
     activity.push(rec);
   }
@@ -557,6 +560,7 @@ app.post('/api/activity/import', requireAuth, (req, res) => {
     const username = normalizeUsername(rawUsername);
     const pct = parseFloat(r.repost_percentage);
     const posts = r.total_posts !== undefined && r.total_posts !== '' ? parseInt(r.total_posts,10) : null;
+    const qr = r.quality_reposts !== undefined && r.quality_reposts !== '' ? parseInt(r.quality_reposts,10) : null;
     const user = getUserByUsername(username);
 
     let status = 'ok', note = '';
@@ -565,7 +569,8 @@ app.post('/api/activity/import', requireAuth, (req, res) => {
     else if(!scopeSet.has(user.id)){ status='error'; note='Not in your scope'; }
     else if(seen.has(username)){ status='duplicate'; note='Duplicate username in file'; }
     if(status==='ok') seen.add(username);
-    return { rawUsername, username, pct: isNaN(pct)?null:Math.round(pct*10)/10, posts: (posts!==null && !isNaN(posts) && posts>=0) ? posts : null, status, note, userId: user?user.id:null };
+    return { rawUsername, username, pct: isNaN(pct)?null:Math.round(pct*10)/10, posts: (posts!==null && !isNaN(posts) && posts>=0) ? posts : null,
+      qualityReposts: (qr!==null && !isNaN(qr) && qr>=0) ? qr : null, status, note, userId: user?user.id:null };
   });
 
   if(!confirm){ res.json({ rows }); return; }
@@ -574,10 +579,10 @@ app.post('/api/activity/import', requireAuth, (req, res) => {
   rows.filter(r=>r.status==='ok').forEach(r => {
     let rec = getRecord(r.userId, date);
     if(rec){
-      rec.posts = r.posts; rec.manualPercentage = r.pct; rec.reason = 'CSV import (repost_percentage)';
+      rec.posts = r.posts; rec.qualityReposts = r.qualityReposts; rec.manualPercentage = r.pct; rec.reason = 'CSV import (repost_percentage)';
       rec.source = 'csv'; rec.updatedBy = actor.displayName; rec.updatedAt = Date.now();
     }else{
-      rec = { id: uid('a'), userId: r.userId, date, posts: r.posts, manualPercentage: r.pct, reason: 'CSV import (repost_percentage)',
+      rec = { id: uid('a'), userId: r.userId, date, posts: r.posts, qualityReposts: r.qualityReposts, manualPercentage: r.pct, reason: 'CSV import (repost_percentage)',
         source: 'csv', createdBy: actor.displayName, updatedBy: actor.displayName, createdAt: Date.now(), updatedAt: Date.now() };
       activity.push(rec);
     }

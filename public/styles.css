@@ -445,7 +445,9 @@ td[data-label=""] .btn + .btn{margin-left:4px;}
   table.lb-table td[data-label="Member"]{grid-column:span 2;}
   table.lb-table td[data-label="Rank"]::before,table.lb-table td[data-label="Member"]::before{display:none;}
   table.lb-table td[data-label="Today's Repost"]{grid-column:1 / -1;}
-  table.lb-table td[data-label="Member's Posts"]{grid-column:span 2;}
+  /* Daily Reports card: repost bar under the name, then Member's Posts + Total Posts side by side */
+  table.daily-table td[data-label="Member's Posts"]{grid-column:span 1;}
+  table.daily-table td[data-label="Total Posts"]{grid-column:span 2;}
   table.lb-table td[data-label="Weekly %"]{grid-column:span 2;}
 }
 
