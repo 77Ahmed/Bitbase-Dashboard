@@ -696,6 +696,23 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(!html(w).includes('Perfect Week') || !html(w).includes('Tanvir Shah')) throw new Error('john should see members outside his group on the leaderboard');
   });
 
+  await tryAsync('Members list is sorted A to Z; Daily Reports shows Member’s Posts then Total Posts as "x/y"', async () => {
+    w.goto('members'); await wait(50);
+    const names = Array.from(w.document.querySelectorAll('#membersTableWrap td[data-label="Member"] .cell-user > div:last-child > div:first-child')).map(e=>e.textContent.trim());
+    const sorted = names.slice().sort((a,b)=>a.localeCompare(b, undefined, { sensitivity:'base' }));
+    if(!names.length || names.join('|') !== sorted.join('|')) throw new Error('members not A-Z: ' + names.join(', '));
+    w.goto('daily'); await wait(50);
+    const h = html(w);
+    if(h.indexOf("<th>Member's Posts</th>") > h.indexOf('<th>Total Posts</th>')) throw new Error("Member's Posts column should come before Total Posts");
+    const lisaRec = w.getRecord(w.getUserByUsername('lisa').id, w.dateStr(0));
+    if(lisaRec.qualityReposts !== 1) throw new Error('the CSV import should have stored lisa’s quality_reposts (1), got ' + lisaRec.qualityReposts);
+    const expected = `1/${w.dailyCommunityTotal(w.dateStr(0))}`;
+    if(!h.includes(`<td data-label="Total Posts">${expected}</td>`)) throw new Error('expected lisa’s Total Posts cell to read ' + expected);
+    if(!h.includes(`<td data-label="Member's Posts"><b>${lisaRec.posts}</b></td>`)) throw new Error('Member’s Posts should show lisa’s own posts');
+    if(h.indexOf("<th>Member's Posts</th>") < h.indexOf("<th>Today's Repost</th>")) throw new Error("Member's Posts should come after Today's Repost");
+    if(!h.includes(`<td data-label="Total Posts">0/${w.dailyCommunityTotal(w.dateStr(0))}</td>`)) throw new Error('a member with no posts should read 0/total');
+  });
+
   // ---------- 25. Weeks are fixed 7-day blocks from the community start date ----------
   await tryAsync('community started 9 days ago -> this is Week 2, covering only the last 3 days', async () => {
     await w.logout(); await wait(300);
