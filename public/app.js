@@ -629,12 +629,19 @@ function canSetActivity(){
   return !!u && u.role === 'admin';
 }
 
-// "Total Posts" (whole community that day) + "Member's Posts" table cells, shown instead of where a record came from.
-function memberPostsText(rec){
-  return rec && rec.posts !== null && rec.posts !== undefined ? String(rec.posts) : '\u2014';
+// "Member's Posts" (the member's own posts) then "Total Posts" (their qualified reposts out of
+// the whole community's posts, e.g. 62/191). Nothing recorded counts as 0.
+function memberPostsCount(rec){
+  return rec && rec.posts !== null && rec.posts !== undefined ? rec.posts : 0;
 }
-function postsCellsHtml(date, rec){
-  return `<td data-label="Total Posts">${dailyCommunityTotal(date)}</td><td data-label="Member's Posts"><b>${memberPostsText(rec)}</b></td>`;
+function memberPostsCellHtml(rec){
+  return `<td data-label="Member's Posts"><b>${memberPostsCount(rec)}</b></td>`;
+}
+function qualityRepostsCount(rec){
+  return rec && rec.qualityReposts !== null && rec.qualityReposts !== undefined ? rec.qualityReposts : 0;
+}
+function totalPostsCellHtml(date, rec){
+  return `<td data-label="Total Posts">${qualityRepostsCount(rec)}/${dailyCommunityTotal(date)}</td>`;
 }
 
 function renderRoleDashboard(u){
@@ -760,7 +767,7 @@ function renderMemberDashboard(u){
         <div class="label">Today's Repost</div>
         <div style="margin-top:8px;">${coloredBarHtml(todayPct, u.assignedPercentage, '100%')}</div>
         <div class="value blue" style="margin-top:8px;">${pctVsAssignedHtml(todayPct, u.assignedPercentage)}</div>
-        <div class="muted" style="font-size:12.5px;">${rec?`${memberPostsText(rec)} of ${dailyCommunityTotal(today)} community posts today`:'Not reported yet'}</div>
+        <div class="muted" style="font-size:12.5px;">${rec?`${memberPostsCount(rec)} posts · reposted ${qualityRepostsCount(rec)}/${dailyCommunityTotal(today)} community posts`:'Not reported yet'}</div>
       </div>
       <div class="stat-card">
         <div class="label">Weekly Activity</div>
@@ -789,12 +796,12 @@ function renderMemberDashboard(u){
 
     <div class="card">
       <h3>My Weekly Breakdown</h3>
-      <div class="scrollx"><table><thead><tr><th>Date</th><th>Activity</th><th>Total Posts</th><th>My Posts</th></tr></thead><tbody>
+      <div class="scrollx"><table><thead><tr><th>Date</th><th>Activity</th><th>My Posts</th><th>Total Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
         return `<tr><td>${fmtDateShort(b.date)}</td>
         <td>${b.record?`${statusDot(activityStatus(pct,u.assignedPercentage))}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td>
-        ${postsCellsHtml(b.date, b.record)}</tr>`;
+        ${memberPostsCellHtml(b.record)}${totalPostsCellHtml(b.date, b.record)}</tr>`;
       }).join('')}
       </tbody></table></div>
     </div>
@@ -837,13 +844,13 @@ function renderMemberWeekly(u){
       <div style="font-size:34px;font-weight:700;color:var(--sky-deep);">${fmtPct(ws.weeklyPct)}</div>
     </div>
     <div class="card">
-      <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>Total Posts</th><th>My Posts</th></tr></thead><tbody>
+      <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>My Posts</th><th>Total Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
         const st = b.record ? activityStatus(pct, u.assignedPercentage) : null;
         return `<tr><td>${fmtDate(b.date)}</td>
         <td>${b.record?`${statusDot(st)}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td>
-        ${postsCellsHtml(b.date, b.record)}</tr>`;
+        ${memberPostsCellHtml(b.record)}${totalPostsCellHtml(b.date, b.record)}</tr>`;
       }).join('')}
       </tbody></table></div>
     </div>
@@ -851,6 +858,8 @@ function renderMemberWeekly(u){
 }
 
 /* ===================== Part 5: Members list + CRUD modal ===================== */
+
+function byDisplayName(a, b){ return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }); }
 
 function renderMembersList(u){
   const isAdmin = u.role === 'admin';
@@ -860,7 +869,7 @@ function renderMembersList(u){
   const viewIds = isAdmin ? allMembers().map(m=>m.id) : (viewScope==='all' ? allMembers().map(m=>m.id) : editScopeIds);
   const q = (state.ui.params.memberQuery || '').toLowerCase();
   const statusFilter = state.ui.params.memberStatus || 'all';
-  let list = viewIds.map(getUser).filter(Boolean);
+  let list = viewIds.map(getUser).filter(Boolean).sort(byDisplayName);
   if(q) list = list.filter(m => m.displayName.toLowerCase().includes(q) || m.username.toLowerCase().includes(q) || (m.xUsername||'').toLowerCase().includes(q));
   if(statusFilter !== 'all') list = list.filter(m => m.status === statusFilter);
 
@@ -936,7 +945,7 @@ function renderMembersOnly(){
   const viewIds = isAdmin ? allMembers().map(m=>m.id) : (viewScope==='all' ? allMembers().map(m=>m.id) : editScopeIds);
   const q = (state.ui.params.memberQuery||'').toLowerCase();
   const statusFilter = state.ui.params.memberStatus || 'all';
-  let list = viewIds.map(getUser).filter(Boolean);
+  let list = viewIds.map(getUser).filter(Boolean).sort(byDisplayName);
   if(q) list = list.filter(m => m.displayName.toLowerCase().includes(q) || m.username.toLowerCase().includes(q) || (m.xUsername||'').toLowerCase().includes(q));
   if(statusFilter !== 'all') list = list.filter(m => m.status === statusFilter);
   wrap.innerHTML = membersTableHtml(list, isAdmin, isAdmin||canModeratorAct('editMembers'), isAdmin||canModeratorAct('removeMembers'), dateStr(0), editScopeSet);
@@ -1265,7 +1274,7 @@ function renderDailyReports(u){
     </div>
     <div class="card">
       <div class="card-head"><h3>${fmtDate(date)}</h3><span class="badge role">Community total: ${communityTotal} posts</span></div>
-      <div class="scrollx"><table class="to-cards lb-table"><thead><tr><th>Rank</th><th>Member</th><th>Today's Repost</th><th>Total Posts</th><th>Member's Posts</th><th></th></tr></thead><tbody>
+      <div class="scrollx"><table class="to-cards lb-table daily-table"><thead><tr><th>Rank</th><th>Member</th><th>Today's Repost</th><th>Member's Posts</th><th>Total Posts</th><th></th></tr></thead><tbody>
       ${ranking.map(r=>{
         const rec = r.record;
         const st = activityStatus(r.pct, r.user.assignedPercentage);
@@ -1273,7 +1282,8 @@ function renderDailyReports(u){
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
           <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
           <td data-label="Today's Repost">${coloredBarHtml(r.pct, r.user.assignedPercentage)} ${pctVsAssignedHtml(r.pct, r.user.assignedPercentage)}</td>
-          ${postsCellsHtml(date, rec)}
+          ${memberPostsCellHtml(rec)}
+          ${totalPostsCellHtml(date, rec)}
           <td data-label="">${canEdit?`<button class="btn btn-outline btn-sm" onclick="openAddDailyModal('${date}','${r.userId}')">Edit</button>`:''}</td>
         </tr>`;
       }).join('')}
@@ -1282,7 +1292,8 @@ function renderDailyReports(u){
           <td data-label="Rank"><span class="muted">\u2014</span></td>
           <td data-label="Member"><div class="cell-user"${m.status!=='active'?' style="opacity:.55;"':''}><div class="mini-avatar">${initials(m.displayName)}</div>${escapeHtml(m.displayName)}${monetizedBadge(m.monetized)}${m.status!=='active'?' <span class="badge inactive" style="margin-left:6px;">inactive</span>':''}</div></td>
           <td data-label="Today's Repost">${m.status==='active'?`<span class="row-status warn">Not reported</span> <span class="muted" style="font-size:11.5px;">(assigned ${fmtPct(m.assignedPercentage)})</span>`:'<span class="muted">\u2014</span>'}</td>
-          ${postsCellsHtml(date, null)}
+          ${memberPostsCellHtml(null)}
+          ${totalPostsCellHtml(date, null)}
           <td data-label="">${canEdit?`<button class="btn btn-outline btn-sm" onclick="openAddDailyModal('${date}','${m.id}')">Add</button>`:''}</td>
         </tr>`;
       }).join('')}
@@ -1389,7 +1400,7 @@ function renderImports(u){
       <div class="drop">
         <div style="font-size:26px;margin-bottom:8px;">\u2b06\ufe0f</div>
         <div>Drop a CSV file here or choose one below.</div>
-        <div class="muted" style="margin-top:6px;">Needs a header row with <code>username</code> and <code>repost_percentage</code> columns. If <code>total_posts</code> is present it's also captured \u2014 it feeds the "Today's Community Posts" total on the dashboard, even though it doesn't affect the imported %. Any other columns are ignored.</div>
+        <div class="muted" style="margin-top:6px;">Needs a header row with <code>username</code> and <code>repost_percentage</code> columns. If <code>total_posts</code> is present it's also captured \u2014 it feeds the "Today's Community Posts" total on the dashboard, even though it doesn't affect the imported %. <code>quality_reposts</code> is captured too — it's the first number in "Total Posts" (e.g. 62/191). Any other columns are ignored.</div>
         <input type="file" accept=".csv,text/csv" style="margin-top:14px;" onchange="handleCsvFile(event,'${date}')" />
       </div>
       <div class="muted" style="font-size:12.5px;margin-top:10px;">Unknown usernames are never auto-created here \u2014 add them on the Members tab first. Duplicate rows are flagged, not silently merged. The imported percentage always overwrites whatever was there before for that member/date.</div>
@@ -1614,13 +1625,13 @@ function renderMemberDetail(u, memberId){
     </div>
     <div class="card">
       <h3>7-Day Breakdown</h3>
-      <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>Total Posts</th><th>Member's Posts</th></tr></thead><tbody>
+      <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>Member's Posts</th><th>Total Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
         const st = b.record ? activityStatus(pct, m.assignedPercentage) : null;
         return `<tr><td>${fmtDate(b.date)}</td>
         <td>${b.record?`${statusDot(st)}${coloredBarHtml(pct,m.assignedPercentage)} ${pctVsAssignedHtml(pct,m.assignedPercentage)}`:'<span class="row-status warn">Missing</span>'}</td>
-        ${postsCellsHtml(b.date, b.record)}</tr>`;
+        ${memberPostsCellHtml(b.record)}${totalPostsCellHtml(b.date, b.record)}</tr>`;
       }).join('')}
       </tbody></table></div>
     </div>
