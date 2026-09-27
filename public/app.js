@@ -286,8 +286,8 @@ function premiumCooldownTagHtml(userId){
 }
 
 /* ---------------- Low-activity warning ----------------
-   Weekly % (days on the member's own assigned target) under 50%, once at least
-   3 days of the week are counted (so one missed first day isn't a warning)
+   Weekly activity (average daily repost %) under 50%, once at least 3 days of
+   the week are counted (so one bad first day isn't a warning)
    -> "you will be removed if your weekly activity stays below 50%". */
 const LOW_WEEKLY_PCT = 50;
 const MIN_DAYS_FOR_WARNING = 3;
@@ -301,13 +301,13 @@ function lowActivityBannerHtml(userId, isSelf){
   if(!w) return '';
   return `<div class="card warn-banner">
     <div style="font-size:22px;">⚠️</div>
-    <div><b>Warning: ${isSelf?'your':'this member’s'} weekly activity is ${fmtPct(w.weeklyPct)} — ${isSelf?'you':'they'} met ${isSelf?'your':'their'} ${fmtPct(w.assignedPct)} target on ${w.achievedDays} of ${w.totalDays} days this week.</b>
+    <div><b>Warning: ${isSelf?'your':'this member’s'} weekly activity is ${fmtPct(w.weeklyPct)} (average repost over ${w.totalDays} days this week).</b>
     <div style="margin-top:2px;">${isSelf?'You':'They'} will be removed if ${isSelf?'your':'their'} weekly activity stays below ${LOW_WEEKLY_PCT}%.</div></div>
   </div>`;
 }
 function lowActivityFlagHtml(userId){
   const w = lowActivityWarning(userId);
-  return w ? ` <span class="badge inactive" title="Weekly activity under ${LOW_WEEKLY_PCT}%: met target on ${w.achievedDays} of ${w.totalDays} days">⚠ under ${LOW_WEEKLY_PCT}%</span>` : '';
+  return w ? ` <span class="badge inactive" title="Weekly activity ${fmtPct(w.weeklyPct)} (average repost over ${w.totalDays} days) is under ${LOW_WEEKLY_PCT}%">⚠ under ${LOW_WEEKLY_PCT}%</span>` : '';
 }
 
 function weeklyStats(userId){
@@ -328,10 +328,11 @@ function weeklyStats(userId){
     }
     return { date, record: rec, pct, achieved };
   });
-  // Out of every day in their week so far (not just days reported) — a missing day, like a
-  // 0% day, simply isn't a day the target was hit. Meet the target every day -> 100%.
+  // Weekly activity = the average of their daily repost % over every day in their week so far
+  // (a day with no report counts as 0%). E.g. 36% and 59.5% -> 47.8%.
   const totalDays = days.length;
-  const weeklyPct = totalDays ? Math.round((achievedDays/totalDays)*1000)/10 : 0;
+  const pctSum = breakdown.reduce((s, b) => s + (b.pct === null ? 0 : b.pct), 0);
+  const weeklyPct = totalDays ? Math.round((pctSum/totalDays)*10)/10 : 0;
   return { breakdown, achievedDays, daysReported, totalDays, weeklyPct, assignedPct };
 }
 
@@ -847,9 +848,9 @@ function renderMemberDashboard(u){
       </div>
       <div class="stat-card">
         <div class="label">Weekly Activity</div>
-        <div class="pbar" style="margin-top:8px;"><span style="width:${ws.weeklyPct}%"></span></div>
-        <div class="value blue" style="margin-top:8px;">${fmtPct(ws.weeklyPct)}</div>
-        <div class="muted" style="font-size:12.5px;">days on target &middot; ${ws.achievedDays}/${ws.totalDays} this week</div>
+        <div style="margin-top:8px;">${coloredBarHtml(ws.weeklyPct, u.assignedPercentage, '100%')}</div>
+        <div class="value blue" style="margin-top:8px;">${pctVsAssignedHtml(ws.weeklyPct, u.assignedPercentage)}</div>
+        <div class="muted" style="font-size:12.5px;">average repost &middot; ${ws.totalDays} day${ws.totalDays===1?'':'s'} this week</div>
       </div>
       <div class="stat-card">
         <div class="label">Today's Rank</div>
@@ -914,11 +915,13 @@ function renderMemberProfile(u){
 function renderMemberWeekly(u){
   const ws = weeklyStats(u.id);
   return `
-    <div class="page-head"><div><h1>My Weekly Activity</h1><div class="sub">${weekLabel()} \u00b7 % of days I met my ${fmtPct(u.assignedPercentage)} target \u2014 only days since I joined count</div></div></div>
+    <div class="page-head"><div><h1>My Weekly Activity</h1><div class="sub">${weekLabel()} \u00b7 my average daily repost this week vs my ${fmtPct(u.assignedPercentage)} target \u2014 only days since I joined count</div></div></div>
     ${lowActivityBannerHtml(u.id, true)}
     <div class="card" style="max-width:420px;text-align:center;">
       <div class="label muted" style="margin-bottom:6px;">Weekly Activity</div>
-      <div style="font-size:34px;font-weight:700;color:var(--sky-deep);">${fmtPct(ws.weeklyPct)}</div>
+      <div style="font-size:34px;font-weight:700;color:var(--sky-deep);">${statusDot(activityStatus(ws.weeklyPct, u.assignedPercentage))}${fmtPct(ws.weeklyPct)}</div>
+      <div class="muted" style="font-size:13px;">target ${fmtPct(u.assignedPercentage)} \u00b7 average over ${ws.totalDays} day${ws.totalDays===1?'':'s'}</div>
+      <div style="margin-top:10px;">${coloredBarHtml(ws.weeklyPct, u.assignedPercentage, '100%')}</div>
     </div>
     <div class="card">
       <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>My Posts</th><th>Total Posts</th></tr></thead><tbody>
@@ -1652,7 +1655,7 @@ function renderWeeklyReports(u){
 
   return `
     <div class="page-head">
-      <div><h1>Weekly Reports</h1><div class="sub">${weekLabel()} \u00b7 % of days each member met their assigned target \u2014 only days since they joined count</div></div>
+      <div><h1>Weekly Reports</h1><div class="sub">${weekLabel()} \u00b7 each member's average daily repost this week vs their assigned target \u2014 only days since they joined count</div></div>
       ${!isAdmin?`<div class="toolbar">
         <button class="btn ${viewScope==='mine'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.weeklyViewScope='mine'; render();">My Members</button>
         <button class="btn ${viewScope==='all'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.weeklyViewScope='all'; render();">All Members</button>
@@ -1665,7 +1668,7 @@ function renderWeeklyReports(u){
         return `<tr>
         <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.m.id)}>${statusDot(st)}<div class="mini-avatar">${initials(r.m.displayName)}</div>${escapeHtml(r.m.displayName)}${monetizedBadge(r.m.monetized)}</div></td>
         <td data-label="Today">${pctVsAssignedHtml(r.todayPct, r.m.assignedPercentage)}</td>
-        <td data-label="Weekly"><div class="pbar" style="display:inline-block;width:80px;vertical-align:middle;"><span style="width:${r.ws.weeklyPct}%"></span></div> ${fmtPct(r.ws.weeklyPct)}${lowActivityFlagHtml(r.m.id)}</td>
+        <td data-label="Weekly">${coloredBarHtml(r.ws.weeklyPct, r.m.assignedPercentage)} ${pctVsAssignedHtml(r.ws.weeklyPct, r.m.assignedPercentage)}${lowActivityFlagHtml(r.m.id)}</td>
         <td data-label=""><button class="btn btn-outline btn-sm" onclick="goto('memberDetail',{userId:'${r.m.id}'})">View \u2192</button></td>
       </tr>`;
       }).join('')}
@@ -1698,7 +1701,7 @@ function renderMemberDetail(u, memberId){
     </div>
     ${lowActivityBannerHtml(memberId, u.id === memberId)}
     <div class="grid-stats">
-      <div class="stat-card"><div class="label">Weekly Activity</div><div class="value blue">${fmtPct(ws.weeklyPct)}</div></div>
+      <div class="stat-card"><div class="label">Weekly Activity</div><div style="margin-top:6px;">${coloredBarHtml(ws.weeklyPct, m.assignedPercentage, '100%')}</div><div class="value blue" style="margin-top:8px;">${pctVsAssignedHtml(ws.weeklyPct, m.assignedPercentage)}</div><div class="muted" style="font-size:12px;">average repost this week</div></div>
       <div class="stat-card"><div class="label">Days Reported</div><div class="value">${ws.daysReported}/${ws.totalDays}</div></div>
     </div>
     <div class="card">
@@ -2053,7 +2056,7 @@ function renderSettings(u){
     </div>
     <div class="card" style="max-width:460px;">
       <h3>How percentages work</h3>
-      <p class="muted" style="font-size:13px;">Each member has an <b>assigned target %</b> (10\u2013100, set when they're added). Their daily "Today's Repost" is compared against that target and color-coded: green at or above target, orange just under it, red well under. A day's actual % comes from posts entered (calculated against that day's total community posts), a percentage set directly by an admin, or a CSV <code>repost_percentage</code> import \u2014 whichever was entered last always wins.</p>
+      <p class="muted" style="font-size:13px;">Each member has an <b>assigned target %</b> (10\u2013100, set when they're added). Their daily "Today's Repost" is compared against that target and color-coded: green at or above target, orange just under it, red well under. A day's actual % comes from posts entered (calculated against that day's total community posts), a percentage set directly by an admin, or a CSV <code>repost_percentage</code> import \u2014 whichever was entered last always wins. <b>Weekly activity</b> is the average of a member's daily repost % over the current week (a day with no report counts as 0%), compared with the same target; under 50% after 3+ days shows the removal warning.</p>
     </div>
     <div class="card" style="max-width:460px;">
       <h3>Data</h3>
