@@ -1740,8 +1740,6 @@ function renderLeaderboard(u){
   const isAdmin = u.role === 'admin';
   const weekById = {}; wRank.forEach(r => weekById[r.userId] = r);
   const todayById = {}; dRank.forEach(r => todayById[r.userId] = r);
-  // Weekly % is part of someone's weekly report \u2014 members only see their own.
-  const showWeeklyPct = r => u.role !== 'member' || r.userId === u.id;
 
   function rowStatus(r){
     const todayRec = getRecord(r.userId, today);
@@ -1810,11 +1808,11 @@ function renderLeaderboard(u){
           <td data-label="Silver">${r.silverDays}</td>
           <td data-label="Bronze">${r.bronzeDays}</td>
           <td data-label="Today">${todayMedalHtml(r.userId)}</td>
-          <td data-label="Weekly %">${showWeeklyPct(r)?fmtPct(r.weeklyPct):'<span class="muted">\u2014</span>'}</td>
+          <td data-label="Weekly %">${fmtPct(r.weeklyPct)}</td>
         </tr>`).join('')}
       ${!rows.length?`<tr><td colspan="7"><div class="empty">No activity recorded yet.</div></td></tr>`:''}
       </tbody></table></div>
-      <div class="muted" style="font-size:12px;margin-top:10px;">Every day the top 3 reposters get \ud83e\udd47 Gold, \ud83e\udd48 Silver and \ud83e\udd49 Bronze. The weekly table adds those medals up over the current community week (weeks run in 7-day blocks from the day the community started): most Gold wins, ties go to more Silver, then more Bronze, then weekly activity %.${u.role==='member'?' You only see your own weekly %.':''} Dots show today's status vs each member's assigned target: <span class="status-dot green" style="margin:0 2px;"></span>on target, <span class="status-dot orange" style="margin:0 2px;"></span>just under, <span class="status-dot red" style="margin:0 2px;"></span>well under. <span class="monetized-dot" style="margin:0 2px;"></span>= monetized.</div>
+      <div class="muted" style="font-size:12px;margin-top:10px;">Every day the top 3 reposters get \ud83e\udd47 Gold, \ud83e\udd48 Silver and \ud83e\udd49 Bronze. The weekly table adds those medals up over the current community week (weeks run in 7-day blocks from the day the community started): most Gold wins, ties go to more Silver, then more Bronze, then weekly activity %. Dots show today's status vs each member's assigned target: <span class="status-dot green" style="margin:0 2px;"></span>on target, <span class="status-dot orange" style="margin:0 2px;"></span>just under, <span class="status-dot red" style="margin:0 2px;"></span>well under. <span class="monetized-dot" style="margin:0 2px;"></span>= monetized.</div>
     </div>
   `;
 }
