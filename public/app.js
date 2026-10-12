@@ -243,21 +243,44 @@ function communityStartDate(){
   return ymdInZone(new Date(Math.min.apply(null, admins.map(a => a.createdAt))));
 }
 
-// { number, start, end, dates } for the week containing today; `dates` stops at today.
-function currentWeek(){
+// { number, start, end, dates, back } for the week `back` weeks before the current one
+// (0 = this week); `dates` stops at today. null if that week is before the community started.
+function communityWeek(back){
+  back = back || 0;
   const today = dateStr(0);
   const start = communityStartDate();
-  if(!start || start > today) return { number: 1, start: today, end: addDaysIso(today, 6), dates: [today] };
+  if(!start || start > today) return back ? null : { number: 1, start: today, end: addDaysIso(today, 6), dates: [today], back: 0 };
   const daysIn = Math.round((isoToUtcMs(today) - isoToUtcMs(start)) / 86400000);
-  const index = Math.floor(daysIn / 7);
+  const index = Math.floor(daysIn / 7) - back;
+  if(index < 0) return null;
   const weekStart = addDaysIso(start, index * 7);
+  const weekEnd = addDaysIso(weekStart, 6);
   const dates = [];
-  for(let d = weekStart; d <= today; d = addDaysIso(d, 1)) dates.push(d);
-  return { number: index + 1, start: weekStart, end: addDaysIso(weekStart, 6), dates };
+  for(let d = weekStart; d <= weekEnd && d <= today; d = addDaysIso(d, 1)) dates.push(d);
+  return { number: index + 1, start: weekStart, end: weekEnd, dates, back };
 }
-function weekLabel(){
-  const w = currentWeek();
+function currentWeek(){ return communityWeek(0); }
+function weekLabel(w){
+  w = w || currentWeek();
   return `Week ${w.number} · ${fmtDateShort(w.start)} – ${fmtDateShort(w.end)}`;
+}
+
+/* Past weeks stay viewable for about a month: this week plus the previous 4. */
+const WEEK_HISTORY = 4;
+// The week picked on the current page (state.ui.params.weekBack), falling back to this week.
+function selectedWeek(){
+  const back = Math.min(Math.max(parseInt(state.ui.params.weekBack, 10) || 0, 0), WEEK_HISTORY);
+  return communityWeek(back) || currentWeek();
+}
+function weekPickerHtml(){
+  const sel = selectedWeek();
+  const opts = [];
+  for(let back = 0; back <= WEEK_HISTORY; back++){
+    const w = communityWeek(back);
+    if(!w) break;
+    opts.push(`<option value="${back}"${back===sel.back?' selected':''}>${weekLabel(w)}${back===0?' (this week)':''}</option>`);
+  }
+  return `<select class="select-sm" aria-label="Week" onchange="state.ui.params.weekBack=+this.value; render();">${opts.join('')}</select>`;
 }
 
 /* ---------------- Premium cooldown ----------------
@@ -310,10 +333,10 @@ function lowActivityFlagHtml(userId){
   return w ? ` <span class="badge inactive" title="Weekly activity ${fmtPct(w.weeklyPct)} (average repost over ${w.totalDays} days) is under ${LOW_WEEKLY_PCT}%">⚠ under ${LOW_WEEKLY_PCT}%</span>` : '';
 }
 
-function weeklyStats(userId){
+function weeklyStats(userId, week){
   // A member's week only covers days since they joined — no "Missing" rows for days before that.
   const start = memberStartDate(userId);
-  const days = currentWeek().dates.filter(d => !start || d >= start);
+  const days = (week || currentWeek()).dates.filter(d => !start || d >= start);
   const member = getUser(userId);
   const assignedPct = member ? member.assignedPercentage : 50;
   let achievedDays = 0, daysReported = 0;
@@ -351,9 +374,10 @@ function dailyRanking(date, scopeIds){
   return rows;
 }
 
-function weeklyLeaderboard(scopeIds){
+function weeklyLeaderboard(scopeIds, week){
+  week = week || currentWeek();
   const ids = scopeIds || allMembers().map(m=>m.id);
-  const days = currentWeek().dates;
+  const days = week.dates;
   const points = {}; ids.forEach(id => points[id] = { userId:id, goldDays:0, silverDays:0, bronzeDays:0, points:0 });
   days.forEach(date => {
     const ranking = dailyRanking(date, ids);
@@ -366,7 +390,7 @@ function weeklyLeaderboard(scopeIds){
   const rows = ids.map(id => {
     const u = getUser(id);
     if(!u || u.status !== 'active') return null;
-    const ws = weeklyStats(id);
+    const ws = weeklyStats(id, week);
     return { userId:id, user:u, points: points[id].points, goldDays: points[id].goldDays, silverDays: points[id].silverDays, bronzeDays: points[id].bronzeDays, weeklyPct: ws.weeklyPct };
   }).filter(Boolean);
   // Medal-table order: most gold days wins; ties go to more silver, then more bronze, then weekly %.
@@ -913,10 +937,12 @@ function renderMemberProfile(u){
 }
 
 function renderMemberWeekly(u){
-  const ws = weeklyStats(u.id);
+  const week = selectedWeek();
+  const ws = weeklyStats(u.id, week);
   return `
-    <div class="page-head"><div><h1>My Weekly Activity</h1><div class="sub">${weekLabel()} \u00b7 my average daily repost this week vs my ${fmtPct(u.assignedPercentage)} target \u2014 only days since I joined count</div></div></div>
-    ${lowActivityBannerHtml(u.id, true)}
+    <div class="page-head"><div><h1>My Weekly Activity</h1><div class="sub">${weekLabel(week)} \u00b7 my average daily repost that week vs my ${fmtPct(u.assignedPercentage)} target \u2014 only days since I joined count</div></div>
+      <div class="toolbar">${weekPickerHtml()}</div></div>
+    ${week.back===0?lowActivityBannerHtml(u.id, true):''}
     <div class="card" style="max-width:420px;text-align:center;">
       <div class="label muted" style="margin-bottom:6px;">Weekly Activity</div>
       <div style="font-size:34px;font-weight:700;color:var(--sky-deep);">${statusDot(activityStatus(ws.weeklyPct, u.assignedPercentage))}${fmtPct(ws.weeklyPct)}</div>
@@ -1645,9 +1671,10 @@ function renderWeeklyReports(u){
   const editScopeIds = scopeForCurrentUser();
   const viewScope = state.ui.params.weeklyViewScope || 'mine';
   const viewIds = isAdmin ? allMembers().map(m=>m.id) : (viewScope==='all' ? allMembers().map(m=>m.id) : editScopeIds);
+  const week = selectedWeek();
   const rows = viewIds.map(id=>{
     const m = getUser(id);
-    const ws = weeklyStats(id);
+    const ws = weeklyStats(id, week);
     const todayRec = getRecord(id, dateStr(0));
     return { m, ws, todayPct: todayRec?effectivePercentage(todayRec):null };
   }).filter(r=>r.m);
@@ -1655,11 +1682,12 @@ function renderWeeklyReports(u){
 
   return `
     <div class="page-head">
-      <div><h1>Weekly Reports</h1><div class="sub">${weekLabel()} \u00b7 each member's average daily repost this week vs their assigned target \u2014 only days since they joined count</div></div>
-      ${!isAdmin?`<div class="toolbar">
-        <button class="btn ${viewScope==='mine'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.weeklyViewScope='mine'; render();">My Members</button>
-        <button class="btn ${viewScope==='all'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.weeklyViewScope='all'; render();">All Members</button>
-      </div>`:''}
+      <div><h1>Weekly Reports</h1><div class="sub">${weekLabel(week)} \u00b7 each member's average daily repost that week vs their assigned target \u2014 only days since they joined count</div></div>
+      <div class="toolbar">
+        ${weekPickerHtml()}
+        ${!isAdmin?`<button class="btn ${viewScope==='mine'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.weeklyViewScope='mine'; render();">My Members</button>
+        <button class="btn ${viewScope==='all'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.weeklyViewScope='all'; render();">All Members</button>`:''}
+      </div>
     </div>
     <div class="card">
       <div class="scrollx"><table class="to-cards"><thead><tr><th>Member</th><th>Today</th><th>Weekly</th><th></th></tr></thead><tbody>
@@ -1668,8 +1696,8 @@ function renderWeeklyReports(u){
         return `<tr>
         <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.m.id)}>${statusDot(st)}<div class="mini-avatar">${initials(r.m.displayName)}</div>${escapeHtml(r.m.displayName)}${monetizedBadge(r.m.monetized)}</div></td>
         <td data-label="Today">${pctVsAssignedHtml(r.todayPct, r.m.assignedPercentage)}</td>
-        <td data-label="Weekly">${coloredBarHtml(r.ws.weeklyPct, r.m.assignedPercentage)} ${pctVsAssignedHtml(r.ws.weeklyPct, r.m.assignedPercentage)}${lowActivityFlagHtml(r.m.id)}</td>
-        <td data-label=""><button class="btn btn-outline btn-sm" onclick="goto('memberDetail',{userId:'${r.m.id}'})">View \u2192</button></td>
+        <td data-label="Weekly">${coloredBarHtml(r.ws.weeklyPct, r.m.assignedPercentage)} ${pctVsAssignedHtml(r.ws.weeklyPct, r.m.assignedPercentage)}${week.back===0?lowActivityFlagHtml(r.m.id):''}</td>
+        <td data-label=""><button class="btn btn-outline btn-sm" onclick="goto('memberDetail',{userId:'${r.m.id}',weekBack:${week.back}})">View \u2192</button></td>
       </tr>`;
       }).join('')}
       ${!rows.length?`<tr><td colspan="4"><div class="empty">No members in scope.</div></td></tr>`:''}
@@ -1686,7 +1714,8 @@ function renderMemberDetail(u, memberId){
   if(!m || m.role !== 'member'){
     return `<div class="empty"><div class="big">\ud83d\udd12</div>That member could not be found.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="goto('directory')">\u2190 Back</button></div>`;
   }
-  const ws = weeklyStats(memberId);
+  const week = selectedWeek();
+  const ws = weeklyStats(memberId, week);
   const mod = m.moderatorId ? getUser(m.moderatorId) : null;
   const memberPayouts = state.payouts.scoped.filter(p=>p.userId===memberId).slice(0,8);
   const memberPayoutTotal = memberPayouts.reduce((s,p)=>s+(p.amount||0),0);
@@ -1699,13 +1728,14 @@ function renderMemberDetail(u, memberId){
         <a class="link-btn ${m.whatsapp?'':'off'}" ${m.whatsapp?`href="https://wa.me/${m.whatsapp.replace(/\D/g,'')}" target="_blank"`:''}>\ud83d\udcac WhatsApp</a>
       </div>
     </div>
-    ${lowActivityBannerHtml(memberId, u.id === memberId)}
+    ${week.back===0?lowActivityBannerHtml(memberId, u.id === memberId):''}
+    <div class="toolbar" style="margin-bottom:12px;">${weekPickerHtml()}</div>
     <div class="grid-stats">
-      <div class="stat-card"><div class="label">Weekly Activity</div><div style="margin-top:6px;">${coloredBarHtml(ws.weeklyPct, m.assignedPercentage, '100%')}</div><div class="value blue" style="margin-top:8px;">${pctVsAssignedHtml(ws.weeklyPct, m.assignedPercentage)}</div><div class="muted" style="font-size:12px;">average repost this week</div></div>
+      <div class="stat-card"><div class="label">Weekly Activity</div><div style="margin-top:6px;">${coloredBarHtml(ws.weeklyPct, m.assignedPercentage, '100%')}</div><div class="value blue" style="margin-top:8px;">${pctVsAssignedHtml(ws.weeklyPct, m.assignedPercentage)}</div><div class="muted" style="font-size:12px;">average repost ${week.back===0?'this week':'that week'}</div></div>
       <div class="stat-card"><div class="label">Days Reported</div><div class="value">${ws.daysReported}/${ws.totalDays}</div></div>
     </div>
     <div class="card">
-      <h3>7-Day Breakdown</h3>
+      <h3>7-Day Breakdown — ${weekLabel(week)}</h3>
       <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>Member's Posts</th><th>Total Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
@@ -1734,7 +1764,10 @@ function renderLeaderboard(u){
   const mode = state.ui.params.lbMode || 'weekly';
   const today = dateStr(0);
   const dRank = dailyRanking(today, allIds);
-  const wRank = weeklyLeaderboard(allIds);
+  // Weekly mode can look back at past weeks; the daily view's tallies are always this week.
+  const week = mode==='weekly' ? selectedWeek() : currentWeek();
+  const past = week.back > 0;
+  const wRank = weeklyLeaderboard(allIds, week);
   const rows = mode==='daily' ? dRank : wRank;
   const podium = rows.slice(0,3);
   const isAdmin = u.role === 'admin';
@@ -1742,6 +1775,7 @@ function renderLeaderboard(u){
   const todayById = {}; dRank.forEach(r => todayById[r.userId] = r);
 
   function rowStatus(r){
+    if(past) return null; // today's dot means nothing on a past week's table
     const todayRec = getRecord(r.userId, today);
     return todayRec ? activityStatus(effectivePercentage(todayRec), r.user.assignedPercentage) : null;
   }
@@ -1762,7 +1796,7 @@ function renderLeaderboard(u){
       <div class="podium-avatar">${initials(r.user.displayName)}</div>
       <div class="pname" title="${escapeHtml(r.user.displayName)}">${statusDot(rowStatus(r))}<span class="pn">${escapeHtml(r.user.displayName)}</span>${monetizedBadge(r.user.monetized)}</div>
       <div class="pscore">${mode==='daily'?fmtPct(r.pct):medalTallyHtml(r)}</div>
-      <div class="psub">${mode==='daily'?`today's repost`:`medals this week`}</div>
+      <div class="psub">${mode==='daily'?`today's repost`:`medals ${past?'that':'this'} week`}</div>
       ${mode==='daily'?`<div class="ptally">${medalTallyHtml(weekById[r.userId])}</div>`:''}
     </div>`;
   }
@@ -1774,7 +1808,8 @@ function renderLeaderboard(u){
       <div><h1>\ud83c\udfc6 Leaderboard</h1><div class="sub">Whole community \u00b7 daily top 3 get Gold/Silver/Bronze \u00b7 the week adds those medals up</div></div>
       <div class="toolbar">
         <button class="btn ${mode==='daily'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.lbMode='daily'; render();">Today</button>
-        <button class="btn ${mode==='weekly'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.lbMode='weekly'; render();">This Week</button>
+        <button class="btn ${mode==='weekly'?'btn-primary':'btn-outline'} btn-sm" style="width:auto;" onclick="state.ui.params.lbMode='weekly'; state.ui.params.weekBack=0; render();">This Week</button>
+        ${mode==='weekly'?weekPickerHtml():''}
         ${isAdmin?`<button class="btn btn-primary btn-sm" style="width:auto;" onclick="openAwardPremiumModal()">\ud83c\udf1f Award Weekly Premium</button>`:''}
       </div>
     </div>
@@ -1792,10 +1827,10 @@ function renderLeaderboard(u){
     </div>
 
     <div class="card">
-      <h3>${mode==='daily'?'Today\u2019s Full Ranking \u2014 '+fmtDate(today):'Weekly Medal Table \u2014 '+weekLabel()}</h3>
+      <h3>${mode==='daily'?'Today\u2019s Full Ranking \u2014 '+fmtDate(today):'Weekly Medal Table \u2014 '+weekLabel(week)}</h3>
       <div class="scrollx"><table class="to-cards lb-table"><thead><tr><th>Rank</th><th>Member</th>${mode==='daily'
         ?'<th>Today\'s Repost</th><th>This Week</th>'
-        :'<th>\ud83e\udd47 Gold</th><th>\ud83e\udd48 Silver</th><th>\ud83e\udd49 Bronze</th><th>Today</th><th>Weekly %</th>'}</tr></thead><tbody>
+        :`<th>\ud83e\udd47 Gold</th><th>\ud83e\udd48 Silver</th><th>\ud83e\udd49 Bronze</th>${past?'':'<th>Today</th>'}<th>Weekly %</th>`}</tr></thead><tbody>
       ${rows.map(r=>mode==='daily'?`<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
           <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(rowStatus(r))}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
@@ -1807,12 +1842,12 @@ function renderLeaderboard(u){
           <td data-label="Gold"><b>${r.goldDays}</b></td>
           <td data-label="Silver">${r.silverDays}</td>
           <td data-label="Bronze">${r.bronzeDays}</td>
-          <td data-label="Today">${todayMedalHtml(r.userId)}</td>
+          ${past?'':`<td data-label="Today">${todayMedalHtml(r.userId)}</td>`}
           <td data-label="Weekly %">${fmtPct(r.weeklyPct)}</td>
         </tr>`).join('')}
       ${!rows.length?`<tr><td colspan="7"><div class="empty">No activity recorded yet.</div></td></tr>`:''}
       </tbody></table></div>
-      <div class="muted" style="font-size:12px;margin-top:10px;">Every day the top 3 reposters get \ud83e\udd47 Gold, \ud83e\udd48 Silver and \ud83e\udd49 Bronze. The weekly table adds those medals up over the current community week (weeks run in 7-day blocks from the day the community started): most Gold wins, ties go to more Silver, then more Bronze, then weekly activity %. Dots show today's status vs each member's assigned target: <span class="status-dot green" style="margin:0 2px;"></span>on target, <span class="status-dot orange" style="margin:0 2px;"></span>just under, <span class="status-dot red" style="margin:0 2px;"></span>well under. <span class="monetized-dot" style="margin:0 2px;"></span>= monetized.</div>
+      <div class="muted" style="font-size:12px;margin-top:10px;">Every day the top 3 reposters get \ud83e\udd47 Gold, \ud83e\udd48 Silver and \ud83e\udd49 Bronze. The weekly table adds those medals up over one community week (weeks run in 7-day blocks from the day the community started; pick a week to see up to ${WEEK_HISTORY} past weeks): most Gold wins, ties go to more Silver, then more Bronze, then weekly activity %. Dots show today's status vs each member's assigned target: <span class="status-dot green" style="margin:0 2px;"></span>on target, <span class="status-dot orange" style="margin:0 2px;"></span>just under, <span class="status-dot red" style="margin:0 2px;"></span>well under. <span class="monetized-dot" style="margin:0 2px;"></span>= monetized.</div>
     </div>
   `;
 }
