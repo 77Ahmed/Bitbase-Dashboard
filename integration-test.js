@@ -843,6 +843,47 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(!html(w).includes('You will be removed')) throw new Error('My Weekly Activity should show the removal warning');
   });
 
+  // ---------- 30. Past weeks stay viewable (this week + 4 back) ----------
+  await tryAsync('last week is still viewable after it ends: leaderboard, weekly reports, member detail, my weekly', async () => {
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'admin';
+    w.document.getElementById('loginPassword').value = 'admin123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    // Started 9 days ago -> Week 1 = days -9..-3 (finished), Week 2 = -2..today.
+    await w.apiSend('PUT', '/settings', { startedOn: w.dateStr(-9) });
+    await w.fetchState();
+    const last = w.communityWeek(1);
+    if(!last || last.number !== 1 || last.start !== w.dateStr(-9) || last.dates.length !== 7) throw new Error('expected a full 7-day Week 1, got ' + JSON.stringify(last));
+    if(w.communityWeek(2) !== null) throw new Error('there is no week before Week 1');
+    // perfectweek reported 75% on days -6..0, so 4 of those days fall in Week 1.
+    const pw = w.getUserByUsername('perfectweek');
+    const ws = w.weeklyStats(pw.id, last);
+    if(ws.totalDays !== 4 || ws.weeklyPct !== 75) throw new Error('perfectweek should average 75% over 4 days in Week 1, got ' + ws.weeklyPct + ' over ' + ws.totalDays);
+    const lb = w.weeklyLeaderboard(w.allMembers().filter(m=>m.status==='active').map(m=>m.id), last);
+    if(lb.reduce((s,r)=>s+r.goldDays,0) > 7) throw new Error('a 7-day week cannot have more than 7 gold days');
+
+    w.goto('weekly', { weekBack: 1 }); await wait(50);
+    if(!html(w).includes('Week 1 ')) throw new Error('Weekly Reports should show Week 1 when picked');
+    if(!html(w).includes('(this week)')) throw new Error('week picker should list this week');
+    w.goto('memberDetail', { userId: pw.id, weekBack: 1 }); await wait(50);
+    if(!html(w).includes('7-Day Breakdown — Week 1')) throw new Error('member detail should show the Week 1 breakdown');
+    w.goto('weekly', { weekBack: 99 }); await wait(50);
+    if(w.selectedWeek().back !== 0) throw new Error('a week before the community started should fall back to this week');
+
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'lowguy';
+    w.document.getElementById('loginPassword').value = 'user123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    w.goto('leaderboard', { lbMode: 'weekly', weekBack: 1 }); await wait(50);
+    if(!html(w).includes('Weekly Medal Table — Week 1')) throw new Error('a member should see last week’s medal table');
+    if(html(w).includes('<th>Today</th>')) throw new Error('a past week’s table should not have a Today column');
+    if(!html(w).includes('Perfect Week')) throw new Error('last week’s table should list the whole community');
+    w.goto('weekly', { weekBack: 1 }); await wait(50);
+    if(html(w).includes('You will be removed')) throw new Error('the removal warning is about this week only, not a past week');
+  });
+
   console.log(JSON.stringify(results, null, 2));
   const fails = results.filter(r => r[1].startsWith('FAIL'));
   console.log('\nTOTAL:', results.length, ' FAILS:', fails.length);
