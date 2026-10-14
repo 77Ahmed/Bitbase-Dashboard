@@ -884,6 +884,32 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(html(w).includes('You will be removed')) throw new Error('the removal warning is about this week only, not a past week');
   });
 
+  // ---------- 31. Back from a member's page returns to where it was opened ----------
+  await tryAsync('Back on a member page returns to the page it was opened from (Daily Reports keeps its date)', async () => {
+    const me = w.getUserByUsername('lowguy').id;
+    w.goto('daily', { dailyDate: w.dateStr(-1) }); await wait(50);
+    w.goto('memberDetail', { userId: me }); await wait(50);
+    w.goBack(); await wait(50);
+    if(w.state.ui.view !== 'daily') throw new Error('Back should return to Daily Reports, got ' + w.state.ui.view);
+    if(w.state.ui.params.dailyDate !== w.dateStr(-1)) throw new Error('Daily Reports should keep the date that was picked');
+    w.goto('leaderboard', { lbMode: 'weekly' }); await wait(50);
+    w.goto('memberDetail', { userId: me }); await wait(50);
+    w.goBack(); await wait(50);
+    if(w.state.ui.view !== 'leaderboard') throw new Error('Back should return to the Leaderboard, got ' + w.state.ui.view);
+  });
+
+  // ---------- 32. Daily Reports CSV download ----------
+  await tryAsync('Daily Reports has a Download CSV button; the CSV has every member shown for that date', async () => {
+    w.goto('daily', {}); await wait(50);
+    if(!html(w).includes('Download CSV')) throw new Error('Daily Reports should have a Download CSV button');
+    const rows = w.dailyReportCsvRows(w.dateStr(0));
+    if(rows[0][0] !== 'Date' || rows[0][3] !== 'Member') throw new Error('unexpected CSV header: ' + rows[0].join(','));
+    const low = rows.find(r => r[4] === 'lowguy');
+    if(!low || low[6] !== 25 || low[0] !== w.dateStr(0)) throw new Error('Low Guy should be in the CSV at 25%, got ' + JSON.stringify(low));
+    const shown = w.document.querySelectorAll('.daily-table tbody tr').length;
+    if(rows.length - 1 !== shown) throw new Error(`CSV should have the same ${shown} rows as the page, got ${rows.length - 1}`);
+  });
+
   console.log(JSON.stringify(results, null, 2));
   const fails = results.filter(r => r[1].startsWith('FAIL'));
   console.log('\nTOTAL:', results.length, ' FAILS:', fails.length);

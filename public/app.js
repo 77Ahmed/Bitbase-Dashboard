@@ -437,10 +437,20 @@ function goto(view, params){
     toast('You can only view your own weekly report and payouts.', true);
     return;
   }
+  // Remember the page a member's detail was opened from (with its date/week/filters),
+  // so that page's Back button returns there instead of always going to the directory.
+  if(view === 'memberDetail' && state.ui.view !== 'memberDetail'){
+    state.ui.backTo = { view: state.ui.view, params: Object.assign({}, state.ui.params) };
+  }
   state.ui.view = view;
   state.ui.params = params || {};
   state.ui.mobileNavOpen = false;
   render();
+}
+function goBack(){
+  const b = state.ui.backTo;
+  state.ui.backTo = null;
+  goto(b ? b.view : 'dashboard', b ? b.params : {});
 }
 
 function requireConfirm(btnEl, label, action){
@@ -1375,6 +1385,7 @@ function renderDailyReports(u){
       <div><h1>Daily Reports</h1><div class="sub">One record per member per day \u2014 the source of truth \u2014 visible to the whole community</div></div>
       <div class="toolbar">
         <input type="date" class="select-sm" value="${date}" max="${dateStr(0)}" onchange="state.ui.params.dailyDate=this.value; render();" />
+        <button class="btn btn-outline" style="width:auto;" onclick="downloadDailyReportCsv('${date}')">⬇ Download CSV</button>
         ${canEdit?`<button class="btn btn-primary" style="width:auto;" onclick="openAddDailyModal('${date}')">+ Add Individual Report</button>`:''}
       </div>
     </div>
@@ -1407,6 +1418,36 @@ function renderDailyReports(u){
       </tbody></table></div>
     </div>
   `;
+}
+
+// The Daily Reports table for one date as CSV rows: ranked members first, then members who didn't report.
+function dailyReportCsvRows(date){
+  const viewIds = allMembers().filter(m=>m.status==='active').map(m=>m.id);
+  const ranking = dailyRanking(date, viewIds);
+  const rankedIds = new Set(ranking.map(r=>r.userId));
+  const missing = viewIds.map(getUser).filter(m=>{ if(!m || rankedIds.has(m.id)) return false; const s = memberStartDate(m.id); return !s || s <= date; });
+  const total = dailyCommunityTotal(date);
+  const rows = [['Date','Rank','Medal','Member','Username','X Username','Repost %','Assigned %','Status','Member’s Posts','Qualified Reposts','Community Total Posts','Monetized']];
+  ranking.forEach(r => {
+    const st = activityStatus(r.pct, r.user.assignedPercentage);
+    rows.push([date, r.rank, r.medal || '', r.user.displayName, r.user.username, r.user.xUsername || '', Math.round(r.pct*10)/10, r.user.assignedPercentage,
+      st==='green'?'On target':st==='orange'?'Just under':'Well under', memberPostsCount(r.record), qualityRepostsCount(r.record), total, r.user.monetized?'Yes':'No']);
+  });
+  missing.forEach(m => {
+    rows.push([date, '', '', m.displayName, m.username, m.xUsername || '', '', m.assignedPercentage, 'Not reported', memberPostsCount(null), qualityRepostsCount(null), total, m.monetized?'Yes':'No']);
+  });
+  return rows;
+}
+function downloadDailyReportCsv(date){
+  const cell = v => { const s = String(v === null || v === undefined ? '' : v); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const csv = dailyReportCsvRows(date).map(r => r.map(cell).join(',')).join('\r\n');
+  // The BOM makes Excel read names with non-English letters correctly.
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `daily-report-${date}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 function openAddDailyModal(date, memberId){
@@ -1712,7 +1753,7 @@ function renderMemberDetail(u, memberId){
   }
   const m = getUser(memberId);
   if(!m || m.role !== 'member'){
-    return `<div class="empty"><div class="big">\ud83d\udd12</div>That member could not be found.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="goto('directory')">\u2190 Back</button></div>`;
+    return `<div class="empty"><div class="big">\ud83d\udd12</div>That member could not be found.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="goBack()">\u2190 Back</button></div>`;
   }
   const week = selectedWeek();
   const ws = weeklyStats(memberId, week);
@@ -1720,7 +1761,7 @@ function renderMemberDetail(u, memberId){
   const memberPayouts = state.payouts.scoped.filter(p=>p.userId===memberId).slice(0,8);
   const memberPayoutTotal = memberPayouts.reduce((s,p)=>s+(p.amount||0),0);
   return `
-    <button class="btn btn-ghost btn-sm" style="margin-bottom:14px;" onclick="history.length>1?goto('directory'):goto('dashboard')">\u2190 Back</button>
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:14px;" onclick="goBack()">\u2190 Back</button>
     <div class="page-head">
       <div><h1>${escapeHtml(m.displayName)}${monetizedBadge(m.monetized)}</h1><div class="sub">@${escapeHtml(m.username)} \u00b7 Moderator: ${mod?escapeHtml(mod.displayName):'\u2014'} \u00b7 Assigned target: ${fmtPct(m.assignedPercentage)}</div></div>
       <div class="profile-links">
