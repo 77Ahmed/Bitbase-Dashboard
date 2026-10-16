@@ -437,20 +437,24 @@ function goto(view, params){
     toast('You can only view your own weekly report and payouts.', true);
     return;
   }
-  // Remember the page a member's detail was opened from (with its date/week/filters),
-  // so that page's Back button returns there instead of always going to the directory.
+  // Remember the page a member's detail was opened from (with its date/week/filters and
+  // scroll position), so that page's Back button returns to the same spot.
   if(view === 'memberDetail' && state.ui.view !== 'memberDetail'){
-    state.ui.backTo = { view: state.ui.view, params: Object.assign({}, state.ui.params) };
+    state.ui.backTo = { view: state.ui.view, params: Object.assign({}, state.ui.params), scrollY: window.scrollY || 0 };
   }
+  const changedPage = view !== state.ui.view;
   state.ui.view = view;
   state.ui.params = params || {};
   state.ui.mobileNavOpen = false;
   render();
+  // A new page starts at the top, not at whatever spot the last page was scrolled to.
+  if(changedPage) window.scrollTo(0, 0);
 }
 function goBack(){
   const b = state.ui.backTo;
   state.ui.backTo = null;
   goto(b ? b.view : 'dashboard', b ? b.params : {});
+  if(b && b.scrollY) window.scrollTo(0, b.scrollY);
 }
 
 function requireConfirm(btnEl, label, action){
@@ -805,15 +809,15 @@ function renderRoleDashboard(u){
 
     <div class="card">
       <div class="card-head"><h3>\ud83c\udfc6 Top of the Week <span class="muted" style="font-size:12px;font-weight:500;">${weekLabel()}</span></h3><button class="btn btn-ghost btn-sm" onclick="goto('leaderboard')">View full leaderboard \u2192</button></div>
-      ${topRows.length ? `<div class="scrollx"><table><thead><tr><th>Rank</th><th>Member</th><th>Medals this week</th><th>Weekly %</th></tr></thead><tbody>
+      ${topRows.length ? `<div class="scrollx"><table class="to-cards lb-table"><thead><tr><th>Rank</th><th>Member</th><th>Medals this week</th><th>Weekly %</th></tr></thead><tbody>
         ${topRows.map(r=>{
           const todayRec = getRecord(r.userId, today);
           const st = todayRec ? activityStatus(effectivePercentage(todayRec), r.user.assignedPercentage) : null;
           return `<tr>
-          <td>${medalHtml(r.medal)} #${r.rank}</td>
-          <td><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
-          <td>${medalTallyHtml(r)}</td>
-          <td>${fmtPct(r.weeklyPct)}</td>
+          <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td data-label="Medals this week">${medalTallyHtml(r)}</td>
+          <td data-label="Weekly %">${fmtPct(r.weeklyPct)}</td>
         </tr>`;
         }).join('')}
       </tbody></table></div>` : `<div class="empty">No activity recorded yet this week.</div>`}
@@ -907,11 +911,11 @@ function renderMemberDashboard(u){
 
     <div class="card">
       <h3>My Weekly Breakdown</h3>
-      <div class="scrollx"><table><thead><tr><th>Date</th><th>Activity</th><th>My Posts</th><th>Total Posts</th></tr></thead><tbody>
+      <div class="scrollx"><table class="to-cards breakdown-table"><thead><tr><th>Date</th><th>Activity</th><th>My Posts</th><th>Total Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
-        return `<tr><td>${fmtDateShort(b.date)}</td>
-        <td>${b.record?`${statusDot(activityStatus(pct,u.assignedPercentage))}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td>
+        return `<tr><td data-label="Date">${fmtDateShort(b.date)}</td>
+        <td data-label="Repost">${b.record?`${statusDot(activityStatus(pct,u.assignedPercentage))}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td>
         ${memberPostsCellHtml(b.record)}${totalPostsCellHtml(b.date, b.record)}</tr>`;
       }).join('')}
       </tbody></table></div>
@@ -960,12 +964,12 @@ function renderMemberWeekly(u){
       <div style="margin-top:10px;">${coloredBarHtml(ws.weeklyPct, u.assignedPercentage, '100%')}</div>
     </div>
     <div class="card">
-      <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>My Posts</th><th>Total Posts</th></tr></thead><tbody>
+      <div class="scrollx"><table class="to-cards breakdown-table"><thead><tr><th>Date</th><th>Repost</th><th>My Posts</th><th>Total Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
         const st = b.record ? activityStatus(pct, u.assignedPercentage) : null;
-        return `<tr><td>${fmtDate(b.date)}</td>
-        <td>${b.record?`${statusDot(st)}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td>
+        return `<tr><td data-label="Date">${fmtDate(b.date)}</td>
+        <td data-label="Repost">${b.record?`${statusDot(st)}${coloredBarHtml(pct,u.assignedPercentage)} ${pctVsAssignedHtml(pct,u.assignedPercentage)}`:'<span class="muted">Missing</span>'}</td>
         ${memberPostsCellHtml(b.record)}${totalPostsCellHtml(b.date, b.record)}</tr>`;
       }).join('')}
       </tbody></table></div>
@@ -1777,12 +1781,12 @@ function renderMemberDetail(u, memberId){
     </div>
     <div class="card">
       <h3>7-Day Breakdown — ${weekLabel(week)}</h3>
-      <div class="scrollx"><table><thead><tr><th>Date</th><th>Repost</th><th>Member's Posts</th><th>Total Posts</th></tr></thead><tbody>
+      <div class="scrollx"><table class="to-cards breakdown-table"><thead><tr><th>Date</th><th>Repost</th><th>Member's Posts</th><th>Total Posts</th></tr></thead><tbody>
       ${ws.breakdown.map(b=>{
         const pct = b.record ? effectivePercentage(b.record) : null;
         const st = b.record ? activityStatus(pct, m.assignedPercentage) : null;
-        return `<tr><td>${fmtDate(b.date)}</td>
-        <td>${b.record?`${statusDot(st)}${coloredBarHtml(pct,m.assignedPercentage)} ${pctVsAssignedHtml(pct,m.assignedPercentage)}`:'<span class="row-status warn">Missing</span>'}</td>
+        return `<tr><td data-label="Date">${fmtDate(b.date)}</td>
+        <td data-label="Repost">${b.record?`${statusDot(st)}${coloredBarHtml(pct,m.assignedPercentage)} ${pctVsAssignedHtml(pct,m.assignedPercentage)}`:'<span class="row-status warn">Missing</span>'}</td>
         ${memberPostsCellHtml(b.record)}${totalPostsCellHtml(b.date, b.record)}</tr>`;
       }).join('')}
       </tbody></table></div>
