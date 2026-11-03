@@ -681,18 +681,21 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(totalGold < 1) throw new Error('expected at least one gold day this week in the test data');
   });
 
-  await tryAsync('a member sees the whole community on the leaderboard (daily + weekly), not just herself', async () => {
+  await tryAsync('a member sees the whole community on the leaderboard (daily + monthly), not just herself', async () => {
     await w.logout(); await wait(300);
     w.document.getElementById('loginUsername').value = 'lisa';
     w.document.getElementById('loginPassword').value = 'user123456';
     submit(w, 'loginUsername');
     await wait(400);
-    w.state.ui.params.lbMode = 'weekly'; w.goto('leaderboard'); await wait(50);
-    if(!html(w).includes('Tanvir Shah') || !html(w).includes('Perfect Week')) throw new Error('weekly leaderboard should list other members for lisa');
-    if(!html(w).includes('medal-tally')) throw new Error('expected medal tallies on the weekly leaderboard');
+    w.state.ui.params.lbMode = 'monthly'; w.goto('leaderboard'); await wait(50);
+    if(!html(w).includes('Tanvir Shah') || !html(w).includes('Perfect Week')) throw new Error('monthly leaderboard should list other members for lisa');
+    if(!html(w).includes('medal-tally')) throw new Error('expected medal tallies on the monthly leaderboard');
+    if(!html(w).includes('Monthly Medal Table')) throw new Error('leaderboard should show the monthly medal table');
+    if(/\d%/.test(w.document.querySelector('.podium').textContent + w.document.querySelector('.lb-table').textContent)) throw new Error('the leaderboard should not show any percentages');
     w.state.ui.params.lbMode = 'daily'; w.render(); await wait(50);
     if(!html(w).includes('Perfect Week')) throw new Error('daily leaderboard should list other members for lisa');
-    if(!html(w).includes('This Week')) throw new Error('daily leaderboard should also show the weekly medal tally');
+    if(!html(w).includes('This Month')) throw new Error('daily leaderboard should also show the monthly medal tally');
+    if(/\d%/.test(w.document.querySelector('.podium').textContent + w.document.querySelector('.lb-table').textContent)) throw new Error('the daily leaderboard should not show any percentages');
   });
 
   await tryAsync('a moderator sees the whole community on the leaderboard, not just his own members', async () => {
@@ -701,7 +704,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.document.getElementById('loginPassword').value = 'mod123456';
     submit(w, 'loginUsername');
     await wait(400);
-    w.state.ui.params.lbMode = 'weekly'; w.goto('leaderboard'); await wait(50);
+    w.state.ui.params.lbMode = 'monthly'; w.goto('leaderboard'); await wait(50);
     if(!html(w).includes('Perfect Week') || !html(w).includes('Tanvir Shah')) throw new Error('john should see members outside his group on the leaderboard');
   });
 
@@ -876,10 +879,10 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.document.getElementById('loginPassword').value = 'user123456';
     submit(w, 'loginUsername');
     await wait(400);
-    w.goto('leaderboard', { lbMode: 'weekly', weekBack: 1 }); await wait(50);
-    if(!html(w).includes('Weekly Medal Table — Week 1')) throw new Error('a member should see last week’s medal table');
-    if(html(w).includes('<th>Today</th>')) throw new Error('a past week’s table should not have a Today column');
-    if(!html(w).includes('Perfect Week')) throw new Error('last week’s table should list the whole community');
+    // The community is only 9 days old, so there is no past month yet: picking one falls back to this month.
+    w.goto('leaderboard', { lbMode: 'monthly', monthBack: 1 }); await wait(50);
+    if(!html(w).includes('Monthly Medal Table — Month 1')) throw new Error('a member should see the monthly medal table');
+    if(!html(w).includes('Perfect Week')) throw new Error('the monthly table should list the whole community');
     w.goto('weekly', { weekBack: 1 }); await wait(50);
     if(html(w).includes('You will be removed')) throw new Error('the removal warning is about this week only, not a past week');
   });
@@ -892,7 +895,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.goBack(); await wait(50);
     if(w.state.ui.view !== 'daily') throw new Error('Back should return to Daily Reports, got ' + w.state.ui.view);
     if(w.state.ui.params.dailyDate !== w.dateStr(-1)) throw new Error('Daily Reports should keep the date that was picked');
-    w.goto('leaderboard', { lbMode: 'weekly' }); await wait(50);
+    w.goto('leaderboard', { lbMode: 'monthly' }); await wait(50);
     w.goto('memberDetail', { userId: me }); await wait(50);
     w.goBack(); await wait(50);
     if(w.state.ui.view !== 'leaderboard') throw new Error('Back should return to the Leaderboard, got ' + w.state.ui.view);
@@ -908,6 +911,24 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(!low || low[6] !== 25 || low[0] !== w.dateStr(0)) throw new Error('Low Guy should be in the CSV at 25%, got ' + JSON.stringify(low));
     const shown = w.document.querySelectorAll('.daily-table tbody tr').length;
     if(rows.length - 1 !== shown) throw new Error(`CSV should have the same ${shown} rows as the page, got ${rows.length - 1}`);
+  });
+
+  // ---------- 33. Community months for the leaderboard ----------
+  await tryAsync('leaderboard months run from the community start day (Sep 26 -> Sep 26-Oct 25, Oct 26-Nov 25)', async () => {
+    const realNow = w.Date.now, realStart = w.state.settings.startedOn;
+    try{
+      w.state.settings.timezone = 'Asia/Karachi';
+      w.state.settings.startedOn = '2026-09-26';
+      w.Date.now = () => Date.parse('2026-11-04T07:00:00Z'); // Nov 4 noon PKT -> report day Nov 3
+      const now = w.communityMonth(0), prev = w.communityMonth(1);
+      if(now.number !== 2 || now.start !== '2026-10-26' || now.end !== '2026-11-25') throw new Error('this month should be Month 2, Oct 26-Nov 25, got ' + JSON.stringify(now));
+      if(now.dates[now.dates.length-1] !== '2026-11-03') throw new Error('this month should run up to the report day');
+      if(prev.number !== 1 || prev.start !== '2026-09-26' || prev.end !== '2026-10-25' || prev.dates.length !== 30) throw new Error('last month should be Month 1, Sep 26-Oct 25 (30 days), got ' + JSON.stringify(prev));
+      if(w.communityMonth(2) !== null) throw new Error('there is no month before the community started');
+      if(w.addMonthsIso('2026-01-31', 1) !== '2026-02-28') throw new Error('a 31st start should use the last day of a short month');
+    }finally{
+      w.Date.now = realNow; w.state.settings.startedOn = realStart;
+    }
   });
 
   console.log(JSON.stringify(results, null, 2));

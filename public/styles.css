@@ -459,6 +459,7 @@ td[data-label=""] .btn + .btn{margin-left:4px;}
   table.daily-table td[data-label="Member's Posts"]{grid-column:span 1;}
   table.daily-table td[data-label="Total Posts"]{grid-column:span 2;}
   table.lb-table td[data-label="Weekly %"]{grid-column:span 2;}
+  table.lb-table td[data-label="This Month"]{grid-column:1 / -1;}
   /* Weekly breakdown card: date, then the repost bar across, then the two post counts side by side */
   table.breakdown-table td[data-label="Repost"]{grid-column:1 / -1;}
   /* In cards a long name or an extra badge (e.g. Premium cooldown) wraps instead of pushing the card wider */
