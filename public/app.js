@@ -43,7 +43,20 @@ function last7Dates(endOffset){
 }
 function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
 function initials(name){
-  return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  return (name||'?').trim().replace(/^@/, '').split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase() || '?';
+}
+/* Members know each other by their X handle, not their real name: when a member is
+   viewing, people are shown as @xUsername (or @username if they have no X handle).
+   Admins and moderators still see real names. */
+function nameFor(user){
+  if(!user) return '';
+  const viewer = typeof currentUser === 'function' ? currentUser() : null;
+  if(!viewer || viewer.role !== 'member') return user.displayName;
+  return '@' + normalizeUsername(user.xUsername || user.username);
+}
+function premiumWinnerName(w){
+  const u = getUser(w.userId) || (state.directory || []).find(d => d.id === w.userId);
+  return u ? nameFor(u) : w.displayName;
 }
 function normalizeUsername(u){
   return (u||'').trim().toLowerCase().replace(/^@/, '');
@@ -840,7 +853,7 @@ function renderRoleDashboard(u){
       ${communityTotalCardHtml(py, isAdmin)}
       <div class="stat-card">
         <div class="label">Last Premium Winner</div>
-        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;"${memberLinkAttrs(py.lastPremiumWinner.userId)}>\ud83c\udf1f ${escapeHtml(py.lastPremiumWinner.displayName)}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
+        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;"${memberLinkAttrs(py.lastPremiumWinner.userId)}>\ud83c\udf1f ${escapeHtml(premiumWinnerName(py.lastPremiumWinner))}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
       </div>
       ${isAdmin?`<div class="stat-card" style="display:flex;align-items:center;justify-content:center;"><button class="btn btn-primary" style="width:auto;" onclick="goto('leaderboard')">\ud83c\udf1f Award Weekly Premium</button></div>`:''}
     </div>
@@ -864,7 +877,7 @@ function renderRoleDashboard(u){
           const st = todayRec ? activityStatus(effectivePercentage(todayRec), r.user.assignedPercentage) : null;
           return `<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
-          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(nameFor(r.user))}</div>${escapeHtml(nameFor(r.user))}${monetizedBadge(r.user.monetized)}</div></td>
           <td data-label="Medals this week">${medalTallyHtml(r)}</td>
           <td data-label="Weekly %">${fmtPct(r.weeklyPct)}</td>
         </tr>`;
@@ -952,7 +965,7 @@ function renderMemberDashboard(u){
       <div class="stat-card"><div class="label">My Total Payout</div><div class="value blue">$${(py.myTotal||0).toFixed(2)}</div></div>
       <div class="stat-card">
         <div class="label">Last Premium Winner</div>
-        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;"${memberLinkAttrs(py.lastPremiumWinner.userId)}>\ud83c\udf1f ${escapeHtml(py.lastPremiumWinner.displayName)}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
+        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;"${memberLinkAttrs(py.lastPremiumWinner.userId)}>\ud83c\udf1f ${escapeHtml(premiumWinnerName(py.lastPremiumWinner))}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
       </div>
     </div>
 
@@ -989,7 +1002,7 @@ function renderMemberProfile(u){
     <div class="card">
       <h3>Details</h3>
       <div style="font-size:13.5px;line-height:2;">
-        <div><span class="muted">Moderator:</span> ${u.moderatorId?escapeHtml(getUser(u.moderatorId).displayName):'\u2014'}</div>
+        <div><span class="muted">Moderator:</span> ${u.moderatorId?escapeHtml(nameFor(getUser(u.moderatorId))):'\u2014'}</div>
         <div><span class="muted">Assigned target:</span> ${fmtPct(u.assignedPercentage)}</div>
         <div><span class="muted">Status:</span> <span class="badge ${u.status}">${u.status}</span></div>
       </div>
@@ -1450,7 +1463,7 @@ function renderDailyReports(u){
         const st = activityStatus(r.pct, r.user.assignedPercentage);
         return `<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
-          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}>${statusDot(st)}<div class="mini-avatar">${initials(nameFor(r.user))}</div>${escapeHtml(nameFor(r.user))}${monetizedBadge(r.user.monetized)}</div></td>
           <td data-label="Today's Repost">${coloredBarHtml(r.pct, r.user.assignedPercentage)} ${pctVsAssignedHtml(r.pct, r.user.assignedPercentage)}</td>
           ${memberPostsCellHtml(rec)}
           ${totalPostsCellHtml(date, rec)}
@@ -1460,7 +1473,7 @@ function renderDailyReports(u){
       ${missing.map(m=>{
         return `<tr>
           <td data-label="Rank"><span class="muted">\u2014</span></td>
-          <td data-label="Member"><div class="cell-user"${m.status!=='active'?' style="opacity:.55;"':''}><div class="mini-avatar">${initials(m.displayName)}</div>${escapeHtml(m.displayName)}${monetizedBadge(m.monetized)}${m.status!=='active'?' <span class="badge inactive" style="margin-left:6px;">inactive</span>':''}</div></td>
+          <td data-label="Member"><div class="cell-user"${m.status!=='active'?' style="opacity:.55;"':''}><div class="mini-avatar">${initials(nameFor(m))}</div>${escapeHtml(nameFor(m))}${monetizedBadge(m.monetized)}${m.status!=='active'?' <span class="badge inactive" style="margin-left:6px;">inactive</span>':''}</div></td>
           <td data-label="Today's Repost">${m.status==='active'?`<span class="row-status warn">Not reported</span> <span class="muted" style="font-size:11.5px;">(assigned ${fmtPct(m.assignedPercentage)})</span>`:'<span class="muted">\u2014</span>'}</td>
           ${memberPostsCellHtml(null)}
           ${totalPostsCellHtml(date, null)}
@@ -1489,6 +1502,12 @@ function dailyReportCsvRows(date){
   missing.forEach(m => {
     rows.push([date, '', '', m.displayName, m.username, m.xUsername || '', '', m.assignedPercentage, 'Not reported', memberPostsCount(null), qualityRepostsCount(null), total, m.monetized?'Yes':'No']);
   });
+  // A member's download names people by X handle, like the page does: no real names or portal usernames.
+  const viewer = currentUser();
+  if(viewer && viewer.role === 'member'){
+    const byUsername = {}; viewIds.map(getUser).forEach(m => { if(m) byUsername[m.username] = m; });
+    rows.forEach((r, i) => { if(i > 0) r[3] = nameFor(byUsername[r[4]]); r.splice(4, 1); });
+  }
   return rows;
 }
 function downloadDailyReportCsv(date){
@@ -1788,7 +1807,7 @@ function renderWeeklyReports(u){
       ${rows.map(r=>{
         const st = activityStatus(r.todayPct, r.m.assignedPercentage);
         return `<tr>
-        <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.m.id)}>${statusDot(st)}<div class="mini-avatar">${initials(r.m.displayName)}</div>${escapeHtml(r.m.displayName)}${monetizedBadge(r.m.monetized)}</div></td>
+        <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.m.id)}>${statusDot(st)}<div class="mini-avatar">${initials(nameFor(r.m))}</div>${escapeHtml(nameFor(r.m))}${monetizedBadge(r.m.monetized)}</div></td>
         <td data-label="Today">${pctVsAssignedHtml(r.todayPct, r.m.assignedPercentage)}</td>
         <td data-label="Weekly">${coloredBarHtml(r.ws.weeklyPct, r.m.assignedPercentage)} ${pctVsAssignedHtml(r.ws.weeklyPct, r.m.assignedPercentage)}${week.back===0?lowActivityFlagHtml(r.m.id):''}</td>
         <td data-label=""><button class="btn btn-outline btn-sm" onclick="goto('memberDetail',{userId:'${r.m.id}',weekBack:${week.back}})">View \u2192</button></td>
@@ -1816,7 +1835,7 @@ function renderMemberDetail(u, memberId){
   return `
     <button class="btn btn-ghost btn-sm" style="margin-bottom:14px;" onclick="goBack()">\u2190 Back</button>
     <div class="page-head">
-      <div><h1>${escapeHtml(m.displayName)}${monetizedBadge(m.monetized)}</h1><div class="sub">@${escapeHtml(m.username)} \u00b7 Moderator: ${mod?escapeHtml(mod.displayName):'\u2014'} \u00b7 Assigned target: ${fmtPct(m.assignedPercentage)}</div></div>
+      <div><h1>${escapeHtml(m.displayName)}${monetizedBadge(m.monetized)}</h1><div class="sub">@${escapeHtml(m.username)} \u00b7 Moderator: ${mod?escapeHtml(nameFor(mod)):'\u2014'} \u00b7 Assigned target: ${fmtPct(m.assignedPercentage)}</div></div>
       <div class="profile-links">
         <a class="link-btn ${m.xUsername?'':'off'}" ${m.xUsername?`href="https://x.com/${encodeURIComponent(m.xUsername)}" target="_blank"`:''}>\ud835\udd4a X</a>
         <a class="link-btn ${m.whatsapp?'':'off'}" ${m.whatsapp?`href="https://wa.me/${m.whatsapp.replace(/\D/g,'')}" target="_blank"`:''}>\ud83d\udcac WhatsApp</a>
@@ -1879,8 +1898,8 @@ function renderLeaderboard(u){
     </div>`;
     return `<div class="podium-slot p${pos}"${memberLinkAttrs(r.userId)}>
       <div class="rank-medal">${medalHtml(medal)}</div>
-      <div class="podium-avatar">${initials(r.user.displayName)}</div>
-      <div class="pname" title="${escapeHtml(r.user.displayName)}"><span class="pn">${escapeHtml(r.user.displayName)}</span>${monetizedBadge(r.user.monetized)}</div>
+      <div class="podium-avatar">${initials(nameFor(r.user))}</div>
+      <div class="pname" title="${escapeHtml(nameFor(r.user))}"><span class="pn">${escapeHtml(nameFor(r.user))}</span>${monetizedBadge(r.user.monetized)}</div>
       <div class="pscore">${medalTallyHtml(mode==='daily' ? monthById[r.userId] : r)}</div>
       <div class="psub">${mode==='daily'?`#${pos} today · medals this month`:`medals ${past?'that':'this'} month`}</div>
     </div>`;
@@ -1901,7 +1920,7 @@ function renderLeaderboard(u){
 
     ${py.lastPremiumWinner?`<div class="card banner">
       <div style="font-size:22px;">🌟</div>
-      <div style="flex:1;min-width:0;"><b>${escapeHtml(py.lastPremiumWinner.displayName)}</b> won the last Premium award (${fmtDate(py.lastPremiumWinner.date)}${py.lastPremiumWinner.amount!==undefined?`, $${(py.lastPremiumWinner.amount||0).toFixed(2)}`:''})</div>
+      <div style="flex:1;min-width:0;"><b>${escapeHtml(premiumWinnerName(py.lastPremiumWinner))}</b> won the last Premium award (${fmtDate(py.lastPremiumWinner.date)}${py.lastPremiumWinner.amount!==undefined?`, $${(py.lastPremiumWinner.amount||0).toFixed(2)}`:''})</div>
       ${canViewMemberDetail(py.lastPremiumWinner.userId)?`<button class="btn btn-outline btn-sm" onclick="goto('memberDetail',{userId:'${py.lastPremiumWinner.userId}'})">View →</button>`:''}
     </div>`:''}
 
@@ -1918,11 +1937,11 @@ function renderLeaderboard(u){
         :'<th>🥇 Gold</th><th>🥈 Silver</th><th>🥉 Bronze</th>'}</tr></thead><tbody>
       ${rows.map(r=>mode==='daily'?`<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
-          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}><div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}</div></td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}><div class="mini-avatar">${initials(nameFor(r.user))}</div>${escapeHtml(nameFor(r.user))}${monetizedBadge(r.user.monetized)}</div></td>
           <td data-label="This Month">${medalTallyHtml(monthById[r.userId])}</td>
         </tr>`:`<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
-          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}><div class="mini-avatar">${initials(r.user.displayName)}</div>${escapeHtml(r.user.displayName)}${monetizedBadge(r.user.monetized)}${isAdmin?premiumCooldownTagHtml(r.userId):''}</div></td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}><div class="mini-avatar">${initials(nameFor(r.user))}</div>${escapeHtml(nameFor(r.user))}${monetizedBadge(r.user.monetized)}${isAdmin?premiumCooldownTagHtml(r.userId):''}</div></td>
           <td data-label="Gold"><b>${r.goldDays}</b></td>
           <td data-label="Silver">${r.silverDays}</td>
           <td data-label="Bronze">${r.bronzeDays}</td>
@@ -1936,14 +1955,14 @@ function renderLeaderboard(u){
 
 function renderDirectory(u){
   return `
-    <div class="page-head"><div><h1>\ud83d\udc65 All Community Members</h1><div class="sub">Every active member, A to Z \u2014 name, username, and X${u.role==='member'?'':' / WhatsApp'} links</div></div></div>
+    <div class="page-head"><div><h1>\ud83d\udc65 All Community Members</h1><div class="sub">${u.role==='member'?'Every active member by X handle, A to Z, with X profile links':'Every active member, A to Z \u2014 name, username, and X / WhatsApp links'}</div></div></div>
     <div class="card">
       <div class="directory-grid">
-        ${state.directory.slice().sort(byDisplayName).map(d=>`<div class="directory-item">
-          <div class="mini-avatar">${initials(d.displayName)}</div>
+        ${state.directory.slice().sort((a,b)=>nameFor(a).localeCompare(nameFor(b), undefined, { sensitivity:'base' })).map(d=>`<div class="directory-item">
+          <div class="mini-avatar">${initials(nameFor(d))}</div>
           <div style="flex:1;min-width:0;">
-            <div style="font-weight:600;font-size:13.5px;"${memberLinkAttrs(d.id)}>${escapeHtml(d.displayName)}${monetizedBadge(d.monetized)}</div>
-            <div class="muted" style="font-size:11.5px;">@${escapeHtml(d.username)}</div>
+            <div style="font-weight:600;font-size:13.5px;"${memberLinkAttrs(d.id)}>${escapeHtml(nameFor(d))}${monetizedBadge(d.monetized)}</div>
+            ${u.role==='member'?'':`<div class="muted" style="font-size:11.5px;">@${escapeHtml(d.username)}</div>`}
           </div>
           <a class="linkicon ${d.xUsername?'':'off'}" ${d.xUsername?`href="https://x.com/${encodeURIComponent(d.xUsername)}" target="_blank"`:''} title="X profile">\ud835\udd4a</a>
           ${u.role==='member'?'':`<a class="linkicon ${d.whatsapp?'':'off'}" ${d.whatsapp?`href="https://wa.me/${d.whatsapp.replace(/\D/g,'')}" target="_blank"`:''} title="WhatsApp">\ud83d\udcac</a>`}
@@ -2116,7 +2135,7 @@ function renderPayoutsPage(u){
       ${communityTotalCardHtml(py, false)}
       <div class="stat-card">
         <div class="label">Last Premium Winner</div>
-        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;"${memberLinkAttrs(py.lastPremiumWinner.userId)}>\ud83c\udf1f ${escapeHtml(py.lastPremiumWinner.displayName)}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
+        ${py.lastPremiumWinner ? `<div class="value" style="font-size:16px;margin-top:6px;"${memberLinkAttrs(py.lastPremiumWinner.userId)}>\ud83c\udf1f ${escapeHtml(premiumWinnerName(py.lastPremiumWinner))}</div><div class="muted" style="font-size:11.5px;">${fmtDate(py.lastPremiumWinner.date)}</div>` : `<div class="muted" style="margin-top:8px;">None yet</div>`}
       </div>
       <div class="stat-card"><div class="label">Total Records</div><div class="value">${list.length}</div></div>
     </div>
