@@ -344,31 +344,6 @@ function monthPickerHtml(){
   return `<select class="select-sm" aria-label="Month" onchange="state.ui.params.monthBack=+this.value; render();">${opts.join('')}</select>`;
 }
 
-/* ---------------- Premium cooldown ----------------
-   A Premium winner sits out the next 3 community weeks (won in Week 1 -> eligible
-   from Week 5). They keep their leaderboard rank; the admin picks the winner by hand.
-   Mirrors premiumEligibleOn() in server.js, which enforces it. */
-const PREMIUM_COOLDOWN_WEEKS = 4;
-function premiumEligibleOn(lastWonDate){
-  const start = communityStartDate();
-  if(!start) return addDaysIso(lastWonDate, PREMIUM_COOLDOWN_WEEKS * 7);
-  const weekIndex = Math.floor((isoToUtcMs(lastWonDate) - isoToUtcMs(start)) / 86400000 / 7);
-  return addDaysIso(start, (weekIndex + PREMIUM_COOLDOWN_WEEKS) * 7);
-}
-// null if the member has never won Premium (as far as this viewer can see — admins see every payout).
-function premiumCooldown(userId){
-  const wins = (state.payouts.scoped || []).filter(p => p.userId === userId && p.type === 'premium');
-  if(!wins.length) return null;
-  const last = wins.reduce((a,b) => a.date > b.date ? a : b);
-  const eligibleOn = premiumEligibleOn(last.date);
-  return { lastWon: last.date, eligibleOn, onCooldown: calendarToday() < eligibleOn };
-}
-
-function premiumCooldownTagHtml(userId){
-  const c = premiumCooldown(userId);
-  return c && c.onCooldown ? ` <span class="badge gold" title="Won Premium ${fmtDate(c.lastWon)} — can win again from ${fmtDate(c.eligibleOn)}">🌟 cooldown till ${fmtDateShort(c.eligibleOn)}</span>` : '';
-}
-
 /* ---------------- Low-activity warning ----------------
    Weekly activity (average daily repost %) under 50%, once at least 3 days of
    the week are counted (so one bad first day isn't a warning)
@@ -1941,7 +1916,7 @@ function renderLeaderboard(u){
           <td data-label="This Month">${medalTallyHtml(monthById[r.userId])}</td>
         </tr>`:`<tr>
           <td data-label="Rank">${medalHtml(r.medal)} #${r.rank}</td>
-          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}><div class="mini-avatar">${initials(nameFor(r.user))}</div>${escapeHtml(nameFor(r.user))}${monetizedBadge(r.user.monetized)}${isAdmin?premiumCooldownTagHtml(r.userId):''}</div></td>
+          <td data-label="Member"><div class="cell-user"${memberLinkAttrs(r.userId)}><div class="mini-avatar">${initials(nameFor(r.user))}</div>${escapeHtml(nameFor(r.user))}${monetizedBadge(r.user.monetized)}</div></td>
           <td data-label="Gold"><b>${r.goldDays}</b></td>
           <td data-label="Silver">${r.silverDays}</td>
           <td data-label="Bronze">${r.bronzeDays}</td>
@@ -1984,19 +1959,16 @@ function openPayoutModal(opts){
   let presetType = opts.presetType || (editing ? editing.type : 'bonus');
   let winnerNote = '';
   if(presetType==='premium' && !editing){
-    // Ranks stay as they are; pre-select the highest-ranked member who isn't on Premium cooldown.
-    const wRank = weeklyLeaderboard(members.map(m=>m.id));
-    const defaultWinner = wRank.find(r => { const c = premiumCooldown(r.userId); return !c || !c.onCooldown; });
-    if(defaultWinner && !presetUserId){
-      presetUserId = defaultWinner.userId;
-      winnerNote = defaultWinner.rank === 1 ? ' \u2014 this week\u2019s #1' : ` \u2014 #${defaultWinner.rank}, top eligible this week`;
+    // No cooldown: pre-select this week's #1, whoever it is (as long as they've won a medal).
+    const top = weeklyLeaderboard(members.map(m=>m.id))[0];
+    if(top && !presetUserId && (top.goldDays || top.silverDays || top.bronzeDays)){
+      presetUserId = top.userId;
+      winnerNote = ' \u2014 this week\u2019s #1';
     }
   }
-  const cooldownNote = id => { const c = premiumCooldown(id); return c && c.onCooldown ? ` (Premium cooldown until ${fmtDateShort(c.eligibleOn)})` : ''; };
   openModal(`
     <div class="modal">
       <h2>${editing?'Edit Payout':'Add Payout'}</h2>
-      <div id="payoutWarnBox"></div>
       <form onsubmit="return submitPayout(event${editing?`,'${editing.id}'`:''})">
         <div class="field-row">
           <div class="field"><label>Type</label>
@@ -2006,7 +1978,7 @@ function openPayoutModal(opts){
           </div>
           <div class="field"><label>Member</label>
             <select id="pyMember" ${editing?'disabled':''}>
-              ${members.map(m=>`<option value="${m.id}" ${presetUserId===m.id?'selected':''}>${escapeHtml(m.displayName)}${presetUserId===m.id?winnerNote:''}${presetType==='premium'?cooldownNote(m.id):''}</option>`).join('')}
+              ${members.map(m=>`<option value="${m.id}" ${presetUserId===m.id?'selected':''}>${escapeHtml(m.displayName)}${presetUserId===m.id?winnerNote:''}</option>`).join('')}
             </select>
           </div>
         </div>
@@ -2025,7 +1997,7 @@ function openPayoutModal(opts){
   `);
 }
 
-async function submitPayout(e, payoutId, override){
+async function submitPayout(e, payoutId){
   e.preventDefault();
   const type = document.getElementById('pyType').value;
   const userId = document.getElementById('pyMember') ? document.getElementById('pyMember').value : null;
@@ -2038,19 +2010,14 @@ async function submitPayout(e, payoutId, override){
       await apiSend('PUT', '/payouts/'+payoutId, { amount, monetized, type, note, date });
       toast('Payout updated.');
     }else{
-      await apiSend('POST', '/payouts', { userId, amount, monetized, type, note, date, override: !!override });
+      await apiSend('POST', '/payouts', { userId, amount, monetized, type, note, date });
       toast('Payout added.');
     }
     closeModal();
     await fetchState();
     render();
   }catch(err){
-    if(err.data && err.data.error === 'cooldown_active'){
-      const box = document.getElementById('payoutWarnBox');
-      box.innerHTML = `<div class="login-error">This member already won Premium on ${escapeHtml(err.data.lastAwardedOn)} \u2014 not eligible again until ${escapeHtml(err.data.eligibleOn)} (a Premium winner sits out the next 3 weeks). <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="submitPayout(event, ${payoutId?`'${payoutId}'`:null}, true)">Add anyway</button></div>`;
-    }else{
-      toast(err.message, true);
-    }
+    toast(err.message, true);
   }
   return false;
 }

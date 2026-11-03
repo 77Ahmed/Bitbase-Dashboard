@@ -462,7 +462,7 @@ td[data-label=""] .btn + .btn{margin-left:4px;}
   table.lb-table td[data-label="This Month"]{grid-column:1 / -1;}
   /* Weekly breakdown card: date, then the repost bar across, then the two post counts side by side */
   table.breakdown-table td[data-label="Repost"]{grid-column:1 / -1;}
-  /* In cards a long name or an extra badge (e.g. Premium cooldown) wraps instead of pushing the card wider */
+  /* In cards a long name or an extra badge (e.g. monetized) wraps instead of pushing the card wider */
   table.to-cards .cell-user{flex-wrap:wrap;white-space:normal;row-gap:4px;}
   table.to-cards .cell-user .badge{margin-left:0;}
 }
