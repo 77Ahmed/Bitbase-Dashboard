@@ -345,15 +345,20 @@ function monthPickerHtml(){
 }
 
 /* ---------------- Low-activity warning ----------------
-   Weekly activity (average daily repost %) under 50%, once at least 3 days of
-   the week are counted (so one bad first day isn't a warning)
-   -> "you will be removed if your weekly activity stays below 50%". */
-const LOW_WEEKLY_PCT = 50;
+   Weekly activity (average daily repost %) under half of the member's own assigned
+   target (assigned 40% -> warned under 20%; assigned 80% -> under 40%), once at least
+   3 days of the week are counted (so one bad first day isn't a warning)
+   -> "you will be removed if your weekly activity stays below 20%". */
+const WARNING_SHARE_OF_TARGET = 0.5;
 const MIN_DAYS_FOR_WARNING = 3;
+function warningThreshold(assignedPct){
+  return Math.round((assignedPct || 0) * WARNING_SHARE_OF_TARGET * 10) / 10;
+}
 function lowActivityWarning(userId){
   const ws = weeklyStats(userId);
-  if(ws.totalDays < MIN_DAYS_FOR_WARNING || ws.weeklyPct >= LOW_WEEKLY_PCT) return null;
-  return { weeklyPct: ws.weeklyPct, achievedDays: ws.achievedDays, totalDays: ws.totalDays, assignedPct: ws.assignedPct };
+  const threshold = warningThreshold(ws.assignedPct);
+  if(ws.totalDays < MIN_DAYS_FOR_WARNING || ws.weeklyPct >= threshold) return null;
+  return { weeklyPct: ws.weeklyPct, achievedDays: ws.achievedDays, totalDays: ws.totalDays, assignedPct: ws.assignedPct, threshold };
 }
 function lowActivityBannerHtml(userId, isSelf){
   const w = lowActivityWarning(userId);
@@ -361,12 +366,12 @@ function lowActivityBannerHtml(userId, isSelf){
   return `<div class="card warn-banner">
     <div style="font-size:22px;">⚠️</div>
     <div><b>Warning: ${isSelf?'your':'this member’s'} weekly activity is ${fmtPct(w.weeklyPct)} (average repost over ${w.totalDays} days this week).</b>
-    <div style="margin-top:2px;">${isSelf?'You':'They'} will be removed if ${isSelf?'your':'their'} weekly activity stays below ${LOW_WEEKLY_PCT}%.</div></div>
+    <div style="margin-top:2px;">${isSelf?'You':'They'} will be removed if ${isSelf?'your':'their'} weekly activity stays below ${fmtPct(w.threshold)} (half of ${isSelf?'your':'their'} ${fmtPct(w.assignedPct)} target).</div></div>
   </div>`;
 }
 function lowActivityFlagHtml(userId){
   const w = lowActivityWarning(userId);
-  return w ? ` <span class="badge inactive" title="Weekly activity ${fmtPct(w.weeklyPct)} (average repost over ${w.totalDays} days) is under ${LOW_WEEKLY_PCT}%">⚠ under ${LOW_WEEKLY_PCT}%</span>` : '';
+  return w ? ` <span class="badge inactive" title="Weekly activity ${fmtPct(w.weeklyPct)} (average repost over ${w.totalDays} days) is under ${fmtPct(w.threshold)}, half of the ${fmtPct(w.assignedPct)} target">⚠ under ${fmtPct(w.threshold)}</span>` : '';
 }
 
 function weeklyStats(userId, week){
@@ -815,7 +820,7 @@ function renderRoleDashboard(u){
   const topRows = weeklyLeaderboard(allMembers().filter(m=>m.status==='active').map(m=>m.id)).slice(0,5);
   const recentLogs = state.auditLogs.slice(0,6);
   const atRisk = scope.map(getUser).filter(m=>m && m.status==='active')
-    .map(m=>{ const w = lowActivityWarning(m.id); return w ? { id:m.id, name:m.displayName, weeklyPct:w.weeklyPct } : null; })
+    .map(m=>{ const w = lowActivityWarning(m.id); return w ? { id:m.id, name:m.displayName, weeklyPct:w.weeklyPct, threshold:w.threshold } : null; })
     .filter(Boolean).sort((a,b)=>a.weeklyPct-b.weeklyPct || a.name.localeCompare(b.name));
 
   return `
@@ -839,9 +844,9 @@ function renderRoleDashboard(u){
     </div>` : ''}
 
     ${atRisk.length ? `<div class="card" style="border-color:#C9822C;">
-      <h3 style="color:#C9822C">⚠️ ${atRisk.length} member${atRisk.length>1?'s':''} under ${LOW_WEEKLY_PCT}% weekly activity</h3>
+      <h3 style="color:#C9822C">⚠️ ${atRisk.length} member${atRisk.length>1?'s':''} under half their target</h3>
       <div class="muted" style="font-size:13px;margin-bottom:8px;">They've been shown the removal warning.</div>
-      <div class="toolbar">${atRisk.map(a=>`<span class="badge inactive"${memberLinkAttrs(a.id)}>${escapeHtml(a.name)} · ${fmtPct(a.weeklyPct)}</span>`).join('')}</div>
+      <div class="toolbar">${atRisk.map(a=>`<span class="badge inactive"${memberLinkAttrs(a.id)}>${escapeHtml(a.name)} · ${fmtPct(a.weeklyPct)} (under ${fmtPct(a.threshold)})</span>`).join('')}</div>
     </div>` : ''}
 
     <div class="card">
@@ -2157,7 +2162,7 @@ function renderSettings(u){
     </div>
     <div class="card" style="max-width:460px;">
       <h3>How percentages work</h3>
-      <p class="muted" style="font-size:13px;">Each member has an <b>assigned target %</b> (10\u2013100, set when they're added). Their daily "Today's Repost" is compared against that target and color-coded: green at or above target, orange just under it, red well under. A day's actual % comes from posts entered (calculated against that day's total community posts), a percentage set directly by an admin, or a CSV <code>repost_percentage</code> import \u2014 whichever was entered last always wins. <b>Weekly activity</b> is the average of a member's daily repost % over the current week (a day with no report counts as 0%), compared with the same target; under 50% after 3+ days shows the removal warning.</p>
+      <p class="muted" style="font-size:13px;">Each member has an <b>assigned target %</b> (10\u2013100, set when they're added). Their daily "Today's Repost" is compared against that target and color-coded: green at or above target, orange just under it, red well under. A day's actual % comes from posts entered (calculated against that day's total community posts), a percentage set directly by an admin, or a CSV <code>repost_percentage</code> import \u2014 whichever was entered last always wins. <b>Weekly activity</b> is the average of a member's daily repost % over the current week (a day with no report counts as 0%), compared with the same target; under half of their target (e.g. under 20% for a 40% target) after 3+ days shows the removal warning.</p>
     </div>
     <div class="card" style="max-width:460px;">
       <h3>Data</h3>
