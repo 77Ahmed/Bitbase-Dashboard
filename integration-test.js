@@ -313,7 +313,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(!html(w).includes('@tanvir')) throw new Error('lisa (a member under a different moderator) should still see tanvir in the directory');
   });
 
-  // ---------- 16. Premium payouts + 30-day cooldown ----------
+  // ---------- 16. Premium payouts (no cooldown) ----------
   await tryAsync('admin awards weekly Premium to tanvir', async () => {
     await w.logout(); await wait(300);
     w.document.getElementById('loginUsername').value = 'admin';
@@ -334,19 +334,16 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(w.state.payouts.communityTotal < 25) throw new Error('communityTotal should include the $25 award');
   });
 
-  await tryAsync('awarding Premium again to the same member within 30 days is blocked (cooldown)', async () => {
+  await tryAsync('no Premium cooldown: the same member can win Premium again right away', async () => {
     const tanvirId = w.getUserByUsername('tanvir').id;
-    let cooldownHit = false;
-    try{
-      await w.apiSend('POST', '/payouts', { userId: tanvirId, amount: 10, monetized: true, type: 'premium', note: '', date: w.dateStr(0), override: false });
-    }catch(err){ cooldownHit = err.data && err.data.error === 'cooldown_active'; }
-    if(!cooldownHit) throw new Error('expected a cooldown_active rejection on second premium award within 30 days');
-  });
-
-  await tryAsync('override:true bypasses the cooldown', async () => {
-    const tanvirId = w.getUserByUsername('tanvir').id;
-    const res = await w.apiSend('POST', '/payouts', { userId: tanvirId, amount: 5, monetized: false, type: 'premium', note: 'manual override', date: w.dateStr(0), override: true });
-    if(!res.payout) throw new Error('override award should have succeeded');
+    const res = await w.apiSend('POST', '/payouts', { userId: tanvirId, amount: 5, monetized: false, type: 'premium', note: 'second win', date: w.dateStr(0) });
+    if(!res.payout) throw new Error('a second Premium award to the same member should be accepted');
+    await w.fetchPayouts();
+    w.goto('leaderboard', { lbMode: 'monthly' }); await wait(50);
+    if(/cooldown/i.test(html(w))) throw new Error('the leaderboard should not mention any Premium cooldown');
+    w.openAwardPremiumModal(); await wait(50);
+    if(/cooldown/i.test(w.document.getElementById('pyMember').innerHTML)) throw new Error('the Premium form should not mark anyone as on cooldown');
+    w.closeModal();
   });
 
   await tryAsync('non-admin cannot award payouts', async () => {
@@ -580,7 +577,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(lisaPayouts[0].amount !== 15) throw new Error('bonus amount not saved correctly: ' + JSON.stringify(lisaPayouts[0]));
   });
 
-  await tryAsync('a second bonus payout to the same member on the same day is NOT blocked (only "premium" type has a cooldown)', async () => {
+  await tryAsync('a second bonus payout to the same member on the same day is NOT blocked', async () => {
     const lisaId = w.getUserByUsername('lisa').id;
     const res = await w.apiSend('POST', '/payouts', { userId: lisaId, amount: 5, monetized: true, type: 'bonus', note: 'another one', date: w.dateStr(0) });
     if(!res.payout) throw new Error('a second bonus payout should not be blocked by any cooldown');
@@ -788,25 +785,20 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(w.state.directory.some(d => d.whatsapp !== undefined)) throw new Error('a member’s directory data should not include WhatsApp');
   });
 
-  // ---------- 28. Premium cooldown = 4 community weeks; low-activity warning ----------
-  await tryAsync('Premium won in Week 1 blocks Weeks 2-4 and is allowed again from Week 5', async () => {
+  // ---------- 28. No Premium cooldown; low-activity warning ----------
+  await tryAsync('Premium won in Week 1 can be won again in Week 2 (no cooldown)', async () => {
     await w.logout(); await wait(300);
     w.document.getElementById('loginUsername').value = 'admin';
     w.document.getElementById('loginPassword').value = 'admin123456';
     submit(w, 'loginUsername');
     await wait(400);
     const before = (await w.apiGet('/state')).settings.startedOn;
-    await w.apiSend('PUT', '/settings', { startedOn: '2026-01-01' }); // Week 1 = Jan 1-7, Week 5 starts Jan 29
+    await w.apiSend('PUT', '/settings', { startedOn: '2026-01-01' }); // Week 1 = Jan 1-7, Week 2 = Jan 8-14
     const id = w.getUserByUsername('perfectweek').id;
     try{
-      await w.apiSend('POST', '/payouts', { userId:id, amount:10, monetized:true, type:'premium', date:'2026-01-03', note:'cooldown test' });
-      let blocked = null;
-      try{ await w.apiSend('POST', '/payouts', { userId:id, amount:10, monetized:true, type:'premium', date:'2026-01-28' }); }
-      catch(err){ blocked = err.data; }
-      if(!blocked || blocked.error !== 'cooldown_active') throw new Error('a Week 4 award should be blocked');
-      if(blocked.eligibleOn !== '2026-01-29') throw new Error('eligible date should be the start of Week 5 (2026-01-29), got ' + blocked.eligibleOn);
-      const ok = await w.apiSend('POST', '/payouts', { userId:id, amount:10, monetized:true, type:'premium', date:'2026-01-29', note:'cooldown test' });
-      if(!ok.payout) throw new Error('a Week 5 award should be allowed');
+      await w.apiSend('POST', '/payouts', { userId:id, amount:10, monetized:true, type:'premium', date:'2026-01-03', note:'week 1 win' });
+      const again = await w.apiSend('POST', '/payouts', { userId:id, amount:10, monetized:true, type:'premium', date:'2026-01-10', note:'week 2 win' });
+      if(!again.payout) throw new Error('a Week 2 Premium award to the Week 1 winner should be allowed');
     }finally{
       await w.apiSend('PUT', '/settings', { startedOn: before });
       await w.fetchState();
