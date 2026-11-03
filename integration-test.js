@@ -805,26 +805,32 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     }
   });
 
-  await tryAsync('weekly activity under 50% (after 3+ days) -> removal warning for the member, flagged for admins', async () => {
-    // 70, 40, 25 -> average 45% -> under 50% -> warned.
+  await tryAsync('weekly activity under half of the member’s own target (after 3+ days) -> removal warning, flagged for admins', async () => {
+    if(w.warningThreshold(40) !== 20 || w.warningThreshold(80) !== 40 || w.warningThreshold(60) !== 30) throw new Error('the warning line should be half the assigned target');
+    // Target 60% -> warned under 30%. 40, 20, 25 -> average 28.3% -> warned.
     const created = await w.apiSend('POST', '/users', { role:'member', username:'lowguy', password:'user123456', displayName:'Low Guy', assignedPercentage:60 });
     const id = created.user.id;
-    for(const [off,pct] of [[-2,70],[-1,40],[0,25]]) await w.apiSend('POST', '/activity', { userId:id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
-    // 55, 65, 50 -> average 56.7% -> NOT warned (even though two days are under their 60% target).
+    for(const [off,pct] of [[-2,40],[-1,20],[0,25]]) await w.apiSend('POST', '/activity', { userId:id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
+    // Target 60% -> 55, 65, 50 -> average 56.7% -> NOT warned (even though two days are under their 60% target).
     const ok = await w.apiSend('POST', '/users', { role:'member', username:'goodavg', password:'user123456', displayName:'Good Average', assignedPercentage:60 });
     for(const [off,pct] of [[-2,55],[-1,65],[0,50]]) await w.apiSend('POST', '/activity', { userId:ok.user.id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
+    // Target 40% -> 45% every day is above their target, so NOT warned (the old flat 50% rule would have warned them).
+    const lowTarget = await w.apiSend('POST', '/users', { role:'member', username:'lowtarget', password:'user123456', displayName:'Low Target', assignedPercentage:40 });
+    for(const off of [-2,-1,0]) await w.apiSend('POST', '/activity', { userId:lowTarget.user.id, date:w.dateStr(off), posts:null, manualPercentage:45, reason:'t' });
     // Only 2 days counted so far, both missed -> 0% but too early to warn.
     const early = await w.apiSend('POST', '/users', { role:'member', username:'earlybird', password:'user123456', displayName:'Early Bird', assignedPercentage:50 });
     for(const [off,pct] of [[-1,10],[0,10]]) await w.apiSend('POST', '/activity', { userId:early.user.id, date:w.dateStr(off), posts:null, manualPercentage:pct, reason:'t' });
     await w.fetchState();
     const warn = w.lowActivityWarning(id);
-    if(!warn || Math.abs(warn.weeklyPct - 45) > 0.1) throw new Error('expected Low Guy warned at 45%, got ' + JSON.stringify(warn));
+    if(!warn || Math.abs(warn.weeklyPct - 28.3) > 0.1 || warn.threshold !== 30) throw new Error('expected Low Guy warned at 28.3% (line 30%), got ' + JSON.stringify(warn));
     if(w.lowActivityWarning(ok.user.id)) throw new Error('Good Average averages 56.7%, so should not be warned');
+    if(w.lowActivityWarning(lowTarget.user.id)) throw new Error('Low Target averages 45% on a 40% target, so should not be warned');
     if(w.lowActivityWarning(early.user.id)) throw new Error('fewer than 3 days counted should not warn yet');
     w.goto('dashboard'); await wait(50);
-    if(!html(w).includes('under 50% weekly activity') || !html(w).includes('Low Guy')) throw new Error('admin dashboard should list Low Guy as at risk');
+    if(!html(w).includes('under half their target') || !html(w).includes('Low Guy') || !html(w).includes('(under 30%)')) throw new Error('admin dashboard should list Low Guy as at risk, under 30%');
+    if(html(w).includes('Low Target ·')) throw new Error('admin dashboard should not list Low Target');
     w.goto('weekly'); await wait(50);
-    if(!html(w).includes('under 50%</span>')) throw new Error('Weekly Reports should flag Low Guy');
+    if(!html(w).includes('under 30%</span>')) throw new Error('Weekly Reports should flag Low Guy under 30%');
     const pw = w.getUserByUsername('perfectweek').id;
     if(w.lowActivityWarning(pw)) throw new Error('perfectweek (75% every day) should not be warned');
 
@@ -833,7 +839,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.document.getElementById('loginPassword').value = 'user123456';
     submit(w, 'loginUsername');
     await wait(400);
-    if(!html(w).includes('You will be removed if your weekly activity stays below 50%')) throw new Error('member dashboard should show the removal warning');
+    if(!html(w).includes('You will be removed if your weekly activity stays below 30% (half of your 60% target)')) throw new Error('member dashboard should show the removal warning with their own line');
     w.goto('weekly'); await wait(50);
     if(!html(w).includes('You will be removed')) throw new Error('My Weekly Activity should show the removal warning');
   });
