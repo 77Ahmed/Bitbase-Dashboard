@@ -310,7 +310,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     submit(w, 'loginUsername');
     await wait(400);
     w.goto('directory'); await wait(50);
-    if(!html(w).includes('Tanvir Shah')) throw new Error('lisa (a member under a different moderator) should still see tanvir in the directory');
+    if(!html(w).includes('@tanvir')) throw new Error('lisa (a member under a different moderator) should still see tanvir in the directory');
   });
 
   // ---------- 16. Premium payouts + 30-day cooldown ----------
@@ -405,7 +405,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(!w.document.querySelector('.nav-item[onclick*="\'daily\'"]')) throw new Error('lisa should have a Daily Reports nav item now');
     w.goto('daily'); await wait(50);
     const dailyHtml = html(w);
-    if(!dailyHtml.includes('Tanvir Shah')) throw new Error('lisa should see tanvir (a member outside her own moderator group) on Daily Reports');
+    if(!dailyHtml.includes('@tanvir')) throw new Error('lisa should see tanvir (a member outside her own moderator group) on Daily Reports');
     if(dailyHtml.includes('btn-outline btn-sm" onclick="openAddDailyModal')) throw new Error('lisa (a member) should never see an Edit/Add button on Daily Reports');
   });
 
@@ -681,18 +681,21 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(totalGold < 1) throw new Error('expected at least one gold day this week in the test data');
   });
 
-  await tryAsync('a member sees the whole community on the leaderboard (daily + weekly), not just herself', async () => {
+  await tryAsync('a member sees the whole community on the leaderboard (daily + monthly), not just herself', async () => {
     await w.logout(); await wait(300);
     w.document.getElementById('loginUsername').value = 'lisa';
     w.document.getElementById('loginPassword').value = 'user123456';
     submit(w, 'loginUsername');
     await wait(400);
-    w.state.ui.params.lbMode = 'weekly'; w.goto('leaderboard'); await wait(50);
-    if(!html(w).includes('Tanvir Shah') || !html(w).includes('Perfect Week')) throw new Error('weekly leaderboard should list other members for lisa');
-    if(!html(w).includes('medal-tally')) throw new Error('expected medal tallies on the weekly leaderboard');
+    w.state.ui.params.lbMode = 'monthly'; w.goto('leaderboard'); await wait(50);
+    if(!html(w).includes('@tanvir') || !html(w).includes('@perfectweek')) throw new Error('monthly leaderboard should list other members for lisa');
+    if(!html(w).includes('medal-tally')) throw new Error('expected medal tallies on the monthly leaderboard');
+    if(!html(w).includes('Monthly Medal Table')) throw new Error('leaderboard should show the monthly medal table');
+    if(/\d%/.test(w.document.querySelector('.podium').textContent + w.document.querySelector('.lb-table').textContent)) throw new Error('the leaderboard should not show any percentages');
     w.state.ui.params.lbMode = 'daily'; w.render(); await wait(50);
-    if(!html(w).includes('Perfect Week')) throw new Error('daily leaderboard should list other members for lisa');
-    if(!html(w).includes('This Week')) throw new Error('daily leaderboard should also show the weekly medal tally');
+    if(!html(w).includes('@perfectweek')) throw new Error('daily leaderboard should list other members for lisa');
+    if(!html(w).includes('This Month')) throw new Error('daily leaderboard should also show the monthly medal tally');
+    if(/\d%/.test(w.document.querySelector('.podium').textContent + w.document.querySelector('.lb-table').textContent)) throw new Error('the daily leaderboard should not show any percentages');
   });
 
   await tryAsync('a moderator sees the whole community on the leaderboard, not just his own members', async () => {
@@ -701,7 +704,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.document.getElementById('loginPassword').value = 'mod123456';
     submit(w, 'loginUsername');
     await wait(400);
-    w.state.ui.params.lbMode = 'weekly'; w.goto('leaderboard'); await wait(50);
+    w.state.ui.params.lbMode = 'monthly'; w.goto('leaderboard'); await wait(50);
     if(!html(w).includes('Perfect Week') || !html(w).includes('Tanvir Shah')) throw new Error('john should see members outside his group on the leaderboard');
   });
 
@@ -876,10 +879,10 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.document.getElementById('loginPassword').value = 'user123456';
     submit(w, 'loginUsername');
     await wait(400);
-    w.goto('leaderboard', { lbMode: 'weekly', weekBack: 1 }); await wait(50);
-    if(!html(w).includes('Weekly Medal Table — Week 1')) throw new Error('a member should see last week’s medal table');
-    if(html(w).includes('<th>Today</th>')) throw new Error('a past week’s table should not have a Today column');
-    if(!html(w).includes('Perfect Week')) throw new Error('last week’s table should list the whole community');
+    // The community is only 9 days old, so there is no past month yet: picking one falls back to this month.
+    w.goto('leaderboard', { lbMode: 'monthly', monthBack: 1 }); await wait(50);
+    if(!html(w).includes('Monthly Medal Table — Month 1')) throw new Error('a member should see the monthly medal table');
+    if(!html(w).includes('@perfectweek')) throw new Error('the monthly table should list the whole community');
     w.goto('weekly', { weekBack: 1 }); await wait(50);
     if(html(w).includes('You will be removed')) throw new Error('the removal warning is about this week only, not a past week');
   });
@@ -892,7 +895,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.goBack(); await wait(50);
     if(w.state.ui.view !== 'daily') throw new Error('Back should return to Daily Reports, got ' + w.state.ui.view);
     if(w.state.ui.params.dailyDate !== w.dateStr(-1)) throw new Error('Daily Reports should keep the date that was picked');
-    w.goto('leaderboard', { lbMode: 'weekly' }); await wait(50);
+    w.goto('leaderboard', { lbMode: 'monthly' }); await wait(50);
     w.goto('memberDetail', { userId: me }); await wait(50);
     w.goBack(); await wait(50);
     if(w.state.ui.view !== 'leaderboard') throw new Error('Back should return to the Leaderboard, got ' + w.state.ui.view);
@@ -903,11 +906,58 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.goto('daily', {}); await wait(50);
     if(!html(w).includes('Download CSV')) throw new Error('Daily Reports should have a Download CSV button');
     const rows = w.dailyReportCsvRows(w.dateStr(0));
-    if(rows[0][0] !== 'Date' || rows[0][3] !== 'Member') throw new Error('unexpected CSV header: ' + rows[0].join(','));
-    const low = rows.find(r => r[4] === 'lowguy');
-    if(!low || low[6] !== 25 || low[0] !== w.dateStr(0)) throw new Error('Low Guy should be in the CSV at 25%, got ' + JSON.stringify(low));
+    // Downloaded by a member, so people are named by X handle (Low Guy has none -> @lowguy) and there's no Username column.
+    if(rows[0][0] !== 'Date' || rows[0][3] !== 'Member' || rows[0].includes('Username')) throw new Error('unexpected CSV header: ' + rows[0].join(','));
+    const low = rows.find(r => r[3] === '@lowguy');
+    if(!low || low[5] !== 25 || low[0] !== w.dateStr(0)) throw new Error('Low Guy should be in the CSV as @lowguy at 25%, got ' + JSON.stringify(low));
+    if(rows.some(r => r.includes('Low Guy') || r.includes('Tanvir Shah'))) throw new Error('a member’s CSV should not contain real names');
     const shown = w.document.querySelectorAll('.daily-table tbody tr').length;
     if(rows.length - 1 !== shown) throw new Error(`CSV should have the same ${shown} rows as the page, got ${rows.length - 1}`);
+  });
+
+  // ---------- 33. Community months for the leaderboard ----------
+  await tryAsync('leaderboard months run from the community start day (Sep 26 -> Sep 26-Oct 25, Oct 26-Nov 25)', async () => {
+    const realNow = w.Date.now, realStart = w.state.settings.startedOn;
+    try{
+      w.state.settings.timezone = 'Asia/Karachi';
+      w.state.settings.startedOn = '2026-09-26';
+      w.Date.now = () => Date.parse('2026-11-04T07:00:00Z'); // Nov 4 noon PKT -> report day Nov 3
+      const now = w.communityMonth(0), prev = w.communityMonth(1);
+      if(now.number !== 2 || now.start !== '2026-10-26' || now.end !== '2026-11-25') throw new Error('this month should be Month 2, Oct 26-Nov 25, got ' + JSON.stringify(now));
+      if(now.dates[now.dates.length-1] !== '2026-11-03') throw new Error('this month should run up to the report day');
+      if(prev.number !== 1 || prev.start !== '2026-09-26' || prev.end !== '2026-10-25' || prev.dates.length !== 30) throw new Error('last month should be Month 1, Sep 26-Oct 25 (30 days), got ' + JSON.stringify(prev));
+      if(w.communityMonth(2) !== null) throw new Error('there is no month before the community started');
+      if(w.addMonthsIso('2026-01-31', 1) !== '2026-02-28') throw new Error('a 31st start should use the last day of a short month');
+    }finally{
+      w.Date.now = realNow; w.state.settings.startedOn = realStart;
+    }
+  });
+
+  // ---------- 34. Members see X handles, not real names ----------
+  await tryAsync('members see other members by X username (or @username without one); admins still see real names', async () => {
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'admin';
+    w.document.getElementById('loginPassword').value = 'admin123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    const tanvir = w.getUserByUsername('tanvir');
+    await w.apiSend('PUT', '/users/' + tanvir.id, { xUsername: 'tanvir_x' });
+    await w.fetchState();
+    w.goto('daily', {}); await wait(50);
+    if(!html(w).includes('Tanvir Shah')) throw new Error('admins should still see real names on Daily Reports');
+
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'lowguy';
+    w.document.getElementById('loginPassword').value = 'user123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    for(const [view, params] of [['daily', {}], ['leaderboard', { lbMode: 'monthly' }], ['leaderboard', { lbMode: 'daily' }], ['directory', {}]]){
+      w.goto(view, params); await wait(50);
+      const text = w.document.getElementById('root').querySelector('.content').textContent;
+      if(text.includes('Tanvir Shah') || text.includes('Perfect Week')) throw new Error(`${view} (${params.lbMode||''}) shows real names to a member`);
+      if(!text.includes('@tanvir_x')) throw new Error(`${view} (${params.lbMode||''}) should show Tanvir as @tanvir_x`);
+      if(!text.includes('@perfectweek')) throw new Error(`${view} (${params.lbMode||''}) should fall back to @perfectweek for a member with no X handle`);
+    }
   });
 
   console.log(JSON.stringify(results, null, 2));
