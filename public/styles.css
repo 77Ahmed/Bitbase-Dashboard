@@ -511,3 +511,9 @@ td[data-label=""] .btn + .btn{margin-left:4px;}
 .warn-banner{display:flex;align-items:flex-start;gap:12px;border-color:#C9822C;background:linear-gradient(0deg,rgba(201,130,44,.10),rgba(201,130,44,.10)),var(--cloud);font-size:13.5px;line-height:1.45;}
 .warn-banner b{color:#C9822C;}
 .cell-user .badge{margin-left:6px;white-space:nowrap;}
+
+/* Quotes + Comments cells (from the repost tracker): side by side under the post counts on phone cards */
+@media (max-width:860px){
+  table.daily-table td[data-label="Quotes"]{grid-column:span 1;}
+  table.daily-table td[data-label="Comments"]{grid-column:span 2;}
+}

@@ -958,6 +958,34 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     }
   });
 
+  // ---------- 35. Repost tracker CSV: video posts only, plus quotes + comments ----------
+  await tryAsync('tracker CSV import keeps video posts only, and shows quotes + comments on Daily Reports and in the CSV', async () => {
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = 'admin';
+    w.document.getElementById('loginPassword').value = 'admin123456';
+    submit(w, 'loginUsername');
+    await wait(400);
+    const csv = 'username,total_posts,video_posts,picture_posts_not_counted,text_posts_not_counted,community_pool_total,pool_excluding_own_posts,'
+      + 'total_reposts,quality_reposts,old_post_reposts,outside_community_reposts,picture_text_reposts_not_counted,'
+      + 'quotes_made,quotes_of_group_posts,comments_on_others,comments_on_group_posts,repost_percentage,complete\n'
+      + 'tanvir,9,4,3,2,40,36,12,8,1,3,2,3,2,7,5,22.2,yes';
+    await w.apiSend('POST', '/activity/import', { csvText: csv, date: w.dateStr(0), confirm: true });
+    await w.fetchState();
+    const rec = w.getRecord(w.getUserByUsername('tanvir').id, w.dateStr(0));
+    if(rec.posts !== 4) throw new Error('only video posts should count as the member’s posts (4), got ' + rec.posts);
+    const want = { quotesMade:3, quotesGroup:2, commentsMade:7, commentsGroup:5, oldPostReposts:1, outsideReposts:3, picturePosts:3, textPosts:2 };
+    for(const k of Object.keys(want)) if(rec[k] !== want[k]) throw new Error(`${k} should be ${want[k]}, got ${rec[k]}`);
+    w.goto('daily', {}); await wait(50);
+    const h = html(w);
+    if(!h.includes('<th>Quotes</th><th>Comments</th>')) throw new Error('Daily Reports should have Quotes and Comments columns');
+    if(!h.includes('<td data-label="Quotes"><b>3</b> <span class="muted">(2 group)</span></td>')) throw new Error('tanvir should show 3 quotes (2 group)');
+    if(!h.includes('<td data-label="Comments"><b>7</b> <span class="muted">(5 group)</span></td>')) throw new Error('tanvir should show 7 comments (5 group)');
+    const rows = w.dailyReportCsvRows(w.dateStr(0));
+    const head = rows[0], row = rows.find(r => r[4] === 'tanvir');
+    if(row[head.indexOf('Quotes Made')] !== 3 || row[head.indexOf('Comments on Group Posts')] !== 5) throw new Error('CSV should carry the quotes / comments numbers: ' + JSON.stringify(row));
+    if(row[head.indexOf('Text Posts (not counted)')] !== 2) throw new Error('CSV should carry the text posts');
+  });
+
   console.log(JSON.stringify(results, null, 2));
   const fails = results.filter(r => r[1].startsWith('FAIL'));
   console.log('\nTOTAL:', results.length, ' FAILS:', fails.length);

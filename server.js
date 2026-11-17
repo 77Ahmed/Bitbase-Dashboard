@@ -29,7 +29,19 @@ const SETTINGS_JSON = path.join(DATA_DIR, 'settings.json');
 const SETUP_KEY = process.env.SETUP_KEY || '';
 
 const USER_COLUMNS = ['id','username','password_hash','display_name','role','status','x_username','whatsapp','moderator_id','assigned_percentage','monetized','permissions_json','created_at'];
-const ACTIVITY_COLUMNS = ['id','user_id','date','posts','quality_reposts','manual_percentage','reason','source','created_by','updated_by','created_at','updated_at'];
+// Extra daily numbers from the repost tracker's summary CSV (repost_tracker.py). Stored and
+// shown as-is; none of them change the repost %. Same column name in the import and the file.
+//   quotes_made / quotes_of_group_posts         quote posts the member made (all / of group posts)
+//   comments_on_others / comments_on_group_posts replies under other people's posts (all / group)
+//   old_post_reposts / outside_community_reposts reposts that don't count for the %
+//   picture_posts_not_counted / text_posts_not_counted   own posts that aren't videos
+const EXTRA_ACTIVITY_FIELDS = [
+  ['quotes_made','quotesMade'], ['quotes_of_group_posts','quotesGroup'],
+  ['comments_on_others','commentsMade'], ['comments_on_group_posts','commentsGroup'],
+  ['old_post_reposts','oldPostReposts'], ['outside_community_reposts','outsideReposts'],
+  ['picture_posts_not_counted','picturePosts'], ['text_posts_not_counted','textPosts'],
+];
+const ACTIVITY_COLUMNS = ['id','user_id','date','posts','quality_reposts',...EXTRA_ACTIVITY_FIELDS.map(f=>f[0]),'manual_percentage','reason','source','created_by','updated_by','created_at','updated_at'];
 const AUDIT_COLUMNS = ['id','time','actor','action','target_name'];
 const PAYOUT_COLUMNS = ['id','user_id','date','amount','monetized','type','note','awarded_by','created_at'];
 
@@ -72,8 +84,12 @@ function userToRow(u){
     monetized: u.role==='member' ? (u.monetized?'true':'false') : '',
     permissions_json: u.permissions?JSON.stringify(u.permissions):'', created_at:u.createdAt };
 }
+function countOrNull(v){ return v===undefined||v===null||v===''?null:Number(v); }
 function rowToActivity(r){
-  return { id:r.id, userId:r.user_id, date:r.date, posts: r.posts===''?null:Number(r.posts),
+  const extras = {};
+  // Added later: older files don't have these columns at all.
+  EXTRA_ACTIVITY_FIELDS.forEach(([col, key]) => { extras[key] = countOrNull(r[col]); });
+  return { ...extras, id:r.id, userId:r.user_id, date:r.date, posts: r.posts===''?null:Number(r.posts),
     // quality_reposts was added later — older files don't have the column at all.
     qualityReposts: r.quality_reposts===undefined||r.quality_reposts===''?null:Number(r.quality_reposts),
     manualPercentage: r.manual_percentage===''?null:Number(r.manual_percentage), reason: r.reason || null, source: r.source,
@@ -82,6 +98,7 @@ function rowToActivity(r){
 function activityToRow(a){
   return { id:a.id, user_id:a.userId, date:a.date, posts: a.posts===null||a.posts===undefined?'':a.posts,
     quality_reposts: a.qualityReposts===null||a.qualityReposts===undefined?'':a.qualityReposts,
+    ...Object.fromEntries(EXTRA_ACTIVITY_FIELDS.map(([col, key]) => [col, a[key]===null||a[key]===undefined?'':a[key]])),
     manual_percentage: a.manualPercentage===null||a.manualPercentage===undefined?'':a.manualPercentage,
     reason:a.reason||'', source:a.source, created_by:a.createdBy, updated_by:a.updatedBy, created_at:a.createdAt, updated_at:a.updatedAt };
 }
@@ -572,7 +589,14 @@ app.post('/api/activity/import', requireAuth, (req, res) => {
     const rawUsername = r.username || '';
     const username = normalizeUsername(rawUsername);
     const pct = parseFloat(r.repost_percentage);
-    const posts = r.total_posts !== undefined && r.total_posts !== '' ? parseInt(r.total_posts,10) : null;
+    // Only video posts count: the tracker's video_posts when it's there, else total_posts (older files).
+    const postsRaw = r.video_posts !== undefined && r.video_posts !== '' ? r.video_posts : r.total_posts;
+    const posts = postsRaw !== undefined && postsRaw !== '' ? parseInt(postsRaw,10) : null;
+    const extras = {};
+    EXTRA_ACTIVITY_FIELDS.forEach(([col, key]) => {
+      const n = r[col] !== undefined && r[col] !== '' ? parseInt(r[col],10) : null;
+      extras[key] = (n!==null && !isNaN(n) && n>=0) ? n : null;
+    });
     const qr = r.quality_reposts !== undefined && r.quality_reposts !== '' ? parseInt(r.quality_reposts,10) : null;
     const user = getUserByUsername(username);
 
@@ -583,7 +607,7 @@ app.post('/api/activity/import', requireAuth, (req, res) => {
     else if(seen.has(username)){ status='duplicate'; note='Duplicate username in file'; }
     if(status==='ok') seen.add(username);
     return { rawUsername, username, pct: isNaN(pct)?null:Math.round(pct*10)/10, posts: (posts!==null && !isNaN(posts) && posts>=0) ? posts : null,
-      qualityReposts: (qr!==null && !isNaN(qr) && qr>=0) ? qr : null, status, note, userId: user?user.id:null };
+      qualityReposts: (qr!==null && !isNaN(qr) && qr>=0) ? qr : null, ...extras, status, note, userId: user?user.id:null };
   });
 
   if(!confirm){ res.json({ rows }); return; }
@@ -592,10 +616,12 @@ app.post('/api/activity/import', requireAuth, (req, res) => {
   rows.filter(r=>r.status==='ok').forEach(r => {
     let rec = getRecord(r.userId, date);
     if(rec){
-      rec.posts = r.posts; rec.qualityReposts = r.qualityReposts; rec.manualPercentage = r.pct; rec.reason = 'CSV import (repost_percentage)';
+      rec.posts = r.posts; rec.qualityReposts = r.qualityReposts; rec.manualPercentage = r.pct;
+      EXTRA_ACTIVITY_FIELDS.forEach(([, key]) => { rec[key] = r[key]; }); rec.reason = 'CSV import (repost_percentage)';
       rec.source = 'csv'; rec.updatedBy = actor.displayName; rec.updatedAt = Date.now();
     }else{
-      rec = { id: uid('a'), userId: r.userId, date, posts: r.posts, qualityReposts: r.qualityReposts, manualPercentage: r.pct, reason: 'CSV import (repost_percentage)',
+      rec = { ...Object.fromEntries(EXTRA_ACTIVITY_FIELDS.map(([, key]) => [key, r[key]])),
+        id: uid('a'), userId: r.userId, date, posts: r.posts, qualityReposts: r.qualityReposts, manualPercentage: r.pct, reason: 'CSV import (repost_percentage)',
         source: 'csv', createdBy: actor.displayName, updatedBy: actor.displayName, createdAt: Date.now(), updatedAt: Date.now() };
       activity.push(rec);
     }
