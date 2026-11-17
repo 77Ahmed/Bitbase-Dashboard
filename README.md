@@ -55,6 +55,13 @@ bitbase-server/
   detail page and profile shows their own payout history.
 - **All Community Members** — a simple directory (name, username, X link)
   for every active member, visible to everyone, shown under the Leaderboard.
+- **Repost tracker CSV** (Imports → Daily Activity, the `summary_report_<day>.csv`
+  from `repost_tracker.py`): only **video posts** count (`video_posts`, or
+  `total_posts` in older files). The tracker's **quotes** (`quotes_made`,
+  `quotes_of_group_posts`) and **comments** (`comments_on_others`,
+  `comments_on_group_posts`) show as Quotes / Comments columns on Daily Reports
+  and the weekly breakdowns; those plus old/outside reposts and picture/text
+  posts are all in the Daily Reports CSV download. None of them change the %.
 
 ## Run it locally
 
