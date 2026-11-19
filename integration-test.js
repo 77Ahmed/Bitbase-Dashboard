@@ -986,6 +986,106 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(row[head.indexOf('Text Posts (not counted)')] !== 2) throw new Error('CSV should carry the text posts');
   });
 
+  // ---------- 36. Ledger: admin only, its own password, the 20% / 15% / 5% split ----------
+  const expectFail = async (fn, status, label) => {
+    try{ await fn(); }catch(err){ if(!status || (err.message + JSON.stringify(err.data||{})).includes(status)) return err; throw new Error(`${label}: wrong error ${err.message}`); }
+    throw new Error(`${label}: should have been refused`);
+  };
+  const loginAs = async (u, p) => {
+    await w.logout(); await wait(300);
+    w.document.getElementById('loginUsername').value = u;
+    w.document.getElementById('loginPassword').value = p;
+    submit(w, 'loginUsername');
+    await wait(400);
+  };
+
+  await tryAsync('Ledger: a member and a moderator get no Ledger menu and the API refuses them', async () => {
+    await loginAs('lisa', 'user123456');
+    if(w.document.querySelector('.nav-item[onclick*="\'ledger\'"]')) throw new Error('a member should not see Ledger');
+    await expectFail(() => w.apiGet('/ledger'), 'Admins only', 'member GET /ledger');
+    await loginAs('john', 'mod123456');
+    if(w.document.querySelector('.nav-item[onclick*="\'ledger\'"]')) throw new Error('a moderator should not see Ledger');
+    await expectFail(() => w.apiSend('POST', '/ledger/password', { accountPassword: 'mod123456', newPassword: 'whatever1' }), 'Admins only', 'moderator set password');
+  });
+
+  await tryAsync('Ledger: admin sees it, it is locked, and creating the ledger password needs the admin login password', async () => {
+    await loginAs('admin', 'admin123456');
+    if(!w.document.querySelector('.nav-item[onclick*="\'ledger\'"]')) throw new Error('admin should have a Ledger menu item');
+    await expectFail(() => w.apiGet('/ledger'), 'ledger_locked', 'GET /ledger before a password');
+    const st = await w.apiGet('/ledger/status');
+    if(st.hasPassword || st.unlocked) throw new Error('fresh ledger should have no password yet: ' + JSON.stringify(st));
+    w.goto('ledger'); await wait(500);
+    if(!html(w).includes('Create the ledger password')) throw new Error('expected the create-password screen');
+    await expectFail(() => w.apiSend('POST', '/ledger/password', { accountPassword: 'wrongpass', newPassword: 'ledger-pass-1' }), 'admin login password to confirm', 'wrong admin password');
+    await expectFail(() => w.apiSend('POST', '/ledger/password', { accountPassword: 'admin123456', newPassword: 'admin123456' }), 'different password', 'same as login');
+    // through the real form
+    w.document.getElementById('lgAcc').value = 'admin123456';
+    w.document.getElementById('lgNew').value = 'ledger-pass-1';
+    w.document.getElementById('lgNew2').value = 'ledger-pass-1';
+    submit(w, 'lgAcc'); await wait(600);
+    if(!html(w).includes('Latest money movements')) throw new Error('ledger should open after creating the password: ' + html(w).slice(0, 200));
+  });
+
+  await tryAsync('Ledger: lock, wrong password refused, right one opens; the login password does NOT open it', async () => {
+    await w.lgLock(); await wait(200);
+    if(!html(w).includes('The Ledger is locked')) throw new Error('expected the locked screen');
+    await expectFail(() => w.apiSend('POST', '/ledger/unlock', { password: 'admin123456' }), 'Wrong ledger password', 'login password');
+    w.document.getElementById('lgPw').value = 'ledger-pass-1';
+    submit(w, 'lgPw'); await wait(600);
+    if(!html(w).includes('Latest money movements')) throw new Error('the right ledger password should open it');
+  });
+
+  await tryAsync('Ledger: $115 payout, Rs 6,530 at 20% -> Rs 4,897.50 gateway + Rs 1,632.50 community; 15% and 5% too', async () => {
+    const tanvir = w.getUserByUsername('tanvir').id, lisa = w.getUserByUsername('lisa').id, hamza = w.getUserByUsername('hamza').id;
+    const { payout } = await w.apiSend('POST', '/ledger/payouts', { memberId: tanvir, usd: 115, date: w.dateStr(0) });
+    if(payout.status !== 'pending') throw new Error('a new payout should be waiting');
+    await expectFail(() => w.apiSend('POST', `/ledger/payouts/${payout.id}/receive`, { receivedPkr: 6530, rate: 10, receivedDate: w.dateStr(0) }), '20%, 15% or 5%', 'rate 10');
+    await w.apiSend('POST', `/ledger/payouts/${payout.id}/receive`, { receivedPkr: 6530, rate: 20, receivedDate: w.dateStr(0) });
+    const p2 = (await w.apiSend('POST', '/ledger/payouts', { memberId: lisa, usd: 80, date: w.dateStr(0) })).payout;
+    await w.apiSend('POST', `/ledger/payouts/${p2.id}/receive`, { receivedPkr: 3410, rate: 15, receivedDate: w.dateStr(0) });
+    const p3 = (await w.apiSend('POST', '/ledger/payouts', { memberId: hamza, usd: 60, date: w.dateStr(0) })).payout;
+    await w.apiSend('POST', `/ledger/payouts/${p3.id}/receive`, { receivedPkr: 850, rate: 5, receivedDate: w.dateStr(0) });
+    await w.apiSend('POST', '/ledger/moves', { type: 'send', pkr: 3000, from: 'gateway', to: 'account', date: w.dateStr(0) });
+    await w.apiSend('POST', '/ledger/expenses', { pkr: 1200, pool: 'community', category: 'Tools & software', date: w.dateStr(0) });
+    await expectFail(() => w.apiSend('POST', '/ledger/moves', { type: 'send', pkr: 5, from: 'gateway', to: 'gateway', date: w.dateStr(0) }), 'same pool', 'send to same pool');
+    w.lg.data = await w.apiGet('/ledger');
+    const b = w.lgBalances();
+    if(b.gateway !== 4897.5 + 3410 - 3000 || b.account !== 3000 || b.community !== 1632.5 + 850 - 1200) throw new Error('balances wrong: ' + JSON.stringify(b));
+    const su = w.lgSplitUsd(115, 20);
+    if(su.gateway !== 17.25 || su.community !== 5.75) throw new Error('$ split wrong: ' + JSON.stringify(su));
+    if(w.lg.data.members.find(m => m.id === tanvir).rate !== 20 || w.lg.data.members.find(m => m.id === lisa).rate !== 15) throw new Error('member rate should be remembered from the last payout');
+    w.state.ui.params.lgTab = 'payouts'; w.render(); await wait(50);
+    if(!html(w).includes('Rs 4,897.50') || !html(w).includes('$17.25')) throw new Error('Payouts tab should show the split in Rs and $');
+    const sum = w.lgReportHtml('summary', {});
+    if(!sum.includes('Members who got a payout (3)')) throw new Error('summary should list the 3 members who got a payout');
+  });
+
+  await tryAsync('Ledger: the password hash never reaches the browser (data or backup)', async () => {
+    const d = await w.apiGet('/ledger'), bk = await w.apiGet('/ledger/backup');
+    if(JSON.stringify(d).includes('passwordHash') || JSON.stringify(bk).includes('passwordHash') || JSON.stringify(d).includes('$2a$')) throw new Error('password hash leaked');
+  });
+
+  await tryAsync('Ledger: a sandbox backup restores, matching members by X username; unknown members are skipped', async () => {
+    const sandbox = { members: [{ id: 'm_1', name: 'Tanvir', handle: 'tanvir_x', rate: 20 }, { id: 'm_2', name: 'Nobody Here', handle: 'nobody', rate: 5 }],
+      payouts: [{ id: 'p_1', memberId: 'm_1', date: w.dateStr(0), usd: 50, status: 'received', rate: 20, receivedPkr: 2800, receivedDate: w.dateStr(0) },
+                { id: 'p_2', memberId: 'm_2', date: w.dateStr(0), usd: 10, status: 'pending' }],
+      expenses: [{ id: 'e_1', date: w.dateStr(0), pkr: 100, category: 'Other', pool: 'account', note: 'x' }], moves: [] };
+    const { preview } = await w.apiSend('POST', '/ledger/restore', { backup: sandbox, confirm: false });
+    if(preview.payouts !== 1 || !preview.skipped.includes('Nobody Here')) throw new Error('preview wrong: ' + JSON.stringify(preview));
+    const before = await w.apiGet('/ledger');
+    if(before.payouts.length < 3) throw new Error('preview must not change anything');
+    await w.apiSend('POST', '/ledger/restore', { backup: sandbox, confirm: true });
+    const after = await w.apiGet('/ledger');
+    if(after.payouts.length !== 1 || after.payouts[0].memberId !== w.getUserByUsername('tanvir').id || after.expenses.length !== 1) throw new Error('restore wrong: ' + JSON.stringify(after.payouts));
+  });
+
+  await tryAsync('Ledger: logging out locks it again', async () => {
+    await loginAs('admin', 'admin123456');
+    await expectFail(() => w.apiGet('/ledger'), 'ledger_locked', 'GET /ledger after a new login');
+    w.goto('ledger'); await wait(500);
+    if(!html(w).includes('The Ledger is locked')) throw new Error('should ask for the ledger password again');
+  });
+
   console.log(JSON.stringify(results, null, 2));
   const fails = results.filter(r => r[1].startsWith('FAIL'));
   console.log('\nTOTAL:', results.length, ' FAILS:', fails.length);

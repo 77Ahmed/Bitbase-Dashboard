@@ -524,6 +524,7 @@ function navFor(role){
     {v:'directory', l:'All Members', i:'\ud83c\udf10'},
     {v:'audit', l:'Audit Logs', i:'\ud83d\udcdc'},
     {v:'payouts', l:'Payouts', i:'\ud83d\udcb0'},
+    {v:'ledger', l:'Ledger', i:'\ud83d\udcd2'},
     {v:'settings', l:'Settings', i:'\u2699\ufe0f'},
   ];
   if(role === 'moderator') return [
@@ -598,6 +599,8 @@ function escapeHtml(s){
 
 async function logout(){
   try{ await apiSend('POST', '/logout'); }catch(e){ /* ignore — we're logging out regardless */ }
+  // Forget the ledger in this tab too: the next admin has to enter the ledger password.
+  if(typeof lg !== 'undefined'){ lg.status = null; lg.data = null; lg.lockForm = 'unlock'; }
   await fetchState();
   render();
 }
@@ -751,6 +754,7 @@ function renderView(view, u){
       case 'audit': return renderAuditLog(u);
       case 'settings': return renderSettings(u);
       case 'payouts': return renderPayoutsPage(u);
+      case 'ledger': return renderLedgerPage(u); // public/ledger.js
       case 'profile': return renderMemberProfile(u);
       case 'memberDetail': return renderMemberDetail(u, state.ui.params.userId);
       default: return renderRoleDashboard(u);

@@ -62,6 +62,20 @@ bitbase-server/
   `comments_on_group_posts`) show as Quotes / Comments columns on Daily Reports
   and the weekly breakdowns; those plus old/outside reposts and picture/text
   posts are all in the Daily Reports CSV download. None of them change the %.
+- **Ledger** (admin sidebar, `public/ledger.js` + `ledger-server.js`): members' X
+  payouts in USD and the money received in PKR. A member gives a fixed **20%**,
+  **15%** or **5%**: at 20% the PKR received is split 15 parts Payment Gateway +
+  5 parts Community Funds; 15% all goes to the Payment Gateway, 5% all to
+  Community Funds. A board adds / sends / removes money between the Payment
+  Gateway, Account and Community Funds; expenses come out of the pool picked.
+  Reports print to PDF (full summary, monthly, per member, expenses, one payout).
+  - Admins only, behind its **own ledger password** (created the first time it's
+    opened, confirmed with the admin login; changed with the current one; reset
+    with the admin login). It locks after 30 minutes without use and on logout.
+  - Stored in `DATA_DIR`: `ledger_payouts.csv`, `ledger_expenses.csv`,
+    `ledger_moves.csv`, `ledger_settings.json` (the password only as a bcrypt
+    hash). Every change also saves that day's full copy in `ledger_backups/`
+    (90 days kept); a restore saves the current ledger there first.
 
 ## Run it locally
 
