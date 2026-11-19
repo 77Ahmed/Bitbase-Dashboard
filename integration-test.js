@@ -1097,6 +1097,15 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(after.payouts.length !== 1 || after.payouts[0].memberId !== w.getUserByUsername('tanvir').id || after.expenses.length !== 1) throw new Error('restore wrong: ' + JSON.stringify(after.payouts));
   });
 
+  await tryAsync('Ledger: "Clear all ledger data" needs the ledger password, empties payouts / expenses / board entries, keeps settings', async () => {
+    await expectFail(() => w.apiSend('POST', '/ledger/clear', { password: 'admin123456' }), 'Wrong ledger password', 'clear with the login password');
+    if((await w.apiGet('/ledger')).payouts.length !== 1) throw new Error('a wrong password must not clear anything');
+    const r = await w.apiSend('POST', '/ledger/clear', { password: 'ledger-pass-1' });
+    const after = await w.apiGet('/ledger');
+    if(r.cleared.payouts !== 1 || r.cleared.expenses !== 1 || after.payouts.length || after.expenses.length || after.moves.length) throw new Error('clear wrong: ' + JSON.stringify(r));
+    if(!(after.settings.usdRate > 0)) throw new Error('settings should stay');
+  });
+
   await tryAsync('Ledger: logging out locks it again', async () => {
     await loginAs('admin', 'admin123456');
     await expectFail(() => w.apiGet('/ledger'), 'ledger_locked', 'GET /ledger after a new login');

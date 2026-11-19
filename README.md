@@ -79,6 +79,10 @@ bitbase-server/
     `ledger_moves.csv`, `ledger_settings.json` (the password only as a bcrypt
     hash). Every change also saves that day's full copy in `ledger_backups/`
     (90 days kept); a restore saves the current ledger there first.
+  - Settings → **Clear all ledger data** (ledger password + typing CLEAR) empties
+    payouts, expenses and board entries; it downloads a backup file first and
+    saves `ledger_backups/before-clear-*.json`. Password, USD rate and members'
+    usual % stay.
 
 ## Run it locally
 
