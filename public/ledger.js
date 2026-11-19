@@ -2,8 +2,9 @@
    Admin-only page behind its own LEDGER password (see ledger-server.js).
    Members' X payouts in USD; money received in PKR, split by the member's fixed rate:
      20% -> 15 parts Payment Gateway + 5 parts Community Funds   15% -> all Gateway   5% -> all Community
-   Pools: Payment Gateway, Account, Community Funds. Expenses + board entries (add / send /
-   remove) move money between them. Reports open the print window (Save as PDF).
+   Pools: Payment Gateway, Account, Community Funds. Expenses (from Community Funds by default)
+   and board entries (add / send / remove) move money between them. Payouts are grouped by X payout
+   day; reports (one payout day, full summary) open the print window (Save as PDF).
    Everything is stored on the server; this file only shows it and sends changes.
    All names here start with lg so they never clash with app.js. */
 'use strict';
@@ -14,16 +15,18 @@ const LG_EXPENSE_CATEGORIES = ['Bank / transfer fee', 'Tools & software', 'Promo
 const LG_TABS = [['board', 'Board'], ['payouts', 'Payouts'], ['members', 'Members'], ['expenses', 'Expenses'], ['reports', 'Reports (PDF)'], ['settings', 'Settings']];
 
 // status: null (not asked yet) | { unlocked, hasPassword };  data: what GET /api/ledger returned
-var lg = { status: null, data: null, loading: false, lockForm: 'unlock' };
+// newDay: a payout day just started (no members yet); again: "Save + add next" was pressed
+var lg = { status: null, data: null, loading: false, lockForm: 'unlock', newDay: null, again: false };
+// "Clear" = the Payment Gateway money was sent to the payment gateway (a send to outside with this name).
+const LG_CLEAR_TO = 'Payment gateway (cleared)';
+function lgIsClear(m){ return m.type === 'send' && m.from === 'gateway' && m.to === 'outside' && m.recipient === LG_CLEAR_TO; }
 
 /* ---------------- helpers ---------------- */
 function lgR2(n){ return Math.round((Number(n) || 0) * 100) / 100; }
-function lgPkr(n){ return 'Rs ' + lgR2(n).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function lgPkr(n){ const v = lgR2(n); return (v < 0 ? '− ' : '') + 'Rs ' + Math.abs(v).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function lgUsd(n){ return '$' + lgR2(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function lgDate(iso){ return iso ? fmtDate(iso) : '—'; }
 function lgToday(){ return calendarToday(); }
-function lgMonthOf(iso){ return (iso || '').slice(0, 7); }
-function lgMonthLabel(ym){ const [y, m] = ym.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }); }
 function lgInRange(iso, from, to){ return (!from || iso >= from) && (!to || iso <= to); }
 function lgVal(id){ const el = document.getElementById(id); return el ? el.value : ''; }
 function lgMember(id){ return ((lg.data && lg.data.members) || []).find(m => m.id === id); }
@@ -62,14 +65,15 @@ function lgEntries(){
     Object.keys(s).forEach(pool => { if(s[pool]) out.push({ date: p.receivedDate || p.date, pool, amount: s[pool], kind: 'payout', text: `${lgMemberName(p)} · ${lgUsd(p.usd)} payout · ${p.rate}%` }); });
   });
   d.moves.forEach(m => {
-    if(m.type === 'add') out.push({ date: m.date, pool: m.to, amount: m.pkr, kind: 'add', text: m.note || 'Added' });
-    if(m.type === 'remove') out.push({ date: m.date, pool: m.from, amount: -m.pkr, kind: 'remove', text: m.note || 'Removed' });
-    if(m.type === 'send'){
-      out.push({ date: m.date, pool: m.from, amount: -m.pkr, kind: 'send', text: (m.to === 'outside' ? `Sent to ${m.recipient || 'outside'}` : `Sent to ${LG_POOLS[m.to]}`) + (m.note ? ' · ' + m.note : '') });
-      if(m.to !== 'outside') out.push({ date: m.date, pool: m.to, amount: m.pkr, kind: 'send', text: `From ${LG_POOLS[m.from]}` + (m.note ? ' · ' + m.note : '') });
+    if(m.type === 'add') out.push({ date: m.date, pool: m.to, amount: m.pkr, kind: 'add', text: m.note || 'Added', moveId: m.id });
+    if(m.type === 'remove') out.push({ date: m.date, pool: m.from, amount: -m.pkr, kind: 'remove', text: m.note || 'Removed', moveId: m.id });
+    if(m.type === 'send' && lgIsClear(m)) out.push({ date: m.date, pool: 'gateway', amount: -m.pkr, kind: 'clear', text: 'Sent to the payment gateway' + (m.note ? ' · ' + m.note : ''), moveId: m.id });
+    else if(m.type === 'send'){
+      out.push({ date: m.date, pool: m.from, amount: -m.pkr, kind: 'send', text: (m.to === 'outside' ? `Sent to ${m.recipient || 'outside'}` : `Sent to ${LG_POOLS[m.to]}`) + (m.note ? ' · ' + m.note : ''), moveId: m.id });
+      if(m.to !== 'outside') out.push({ date: m.date, pool: m.to, amount: m.pkr, kind: 'send', text: `From ${LG_POOLS[m.from]}` + (m.note ? ' · ' + m.note : ''), moveId: m.id });
     }
   });
-  d.expenses.forEach(e => out.push({ date: e.date, pool: e.pool, amount: -e.pkr, kind: 'expense', text: `${e.category}${e.note ? ' · ' + e.note : ''}` }));
+  d.expenses.forEach(e => out.push({ date: e.date, pool: e.pool, amount: -e.pkr, kind: 'expense', text: `${e.category}${e.note ? ' · ' + e.note : ''}`, expenseId: e.id }));
   return out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
 }
 function lgBalances(upTo){
@@ -198,6 +202,7 @@ async function lgSetPassword(e, mode){
 function lgBoard(){
   const b = lgBalances(), t = lgTotals();
   const entries = lgEntries().slice().reverse().slice(0, 40);
+  const cleared = lg.data.moves.filter(lgIsClear).sort((x, y) => x.date < y.date ? -1 : 1), last = cleared[cleared.length - 1];
   return `
     <div class="toolbar" style="margin-bottom:14px;">
       <button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgOpenMove('add')">↓ Add money</button>
@@ -207,7 +212,9 @@ function lgBoard(){
     </div>
     <div class="grid-stats">
       <div class="stat-card"><div class="label">Total balance</div><div class="value blue">${lgPkr(b.gateway + b.account + b.community)}</div></div>
-      ${Object.keys(LG_POOLS).map(k => `<div class="stat-card"><div class="label">${LG_POOLS[k]}</div><div class="value blue">${lgPkr(b[k])}</div></div>`).join('')}
+      ${Object.keys(LG_POOLS).map(k => `<div class="stat-card"><div class="label">${LG_POOLS[k]}</div><div class="value blue">${lgPkr(b[k])}</div>
+        ${k === 'gateway' ? `${last ? `<div class="muted" style="font-size:12px;">Last cleared ${lgDate(last.date)} · ${lgPkr(last.pkr)}</div>` : ''}
+          ${b.gateway > 0 ? `<button class="btn btn-outline btn-sm" style="width:auto;margin-top:8px;" onclick="lgOpenClear()" title="You sent the Payment Gateway money to the payment gateway">✔ Clear (sent)</button>` : ''}` : ''}</div>`).join('')}
     </div>
     <div class="grid-stats">
       <div class="stat-card"><div class="label">Payouts recorded</div><div class="value">${t.payouts}</div><div class="muted" style="font-size:12px;">${lgUsd(t.payoutUsd)} in X payouts</div></div>
@@ -216,15 +223,36 @@ function lgBoard(){
       <div class="stat-card"><div class="label">Expenses</div><div class="value">${lgPkr(t.expensesPkr)}</div><div class="muted" style="font-size:12px;">${t.expenses} expense${t.expenses === 1 ? '' : 's'}</div></div>
     </div>
     <div class="card"><h3>Latest money movements</h3>
-      ${entries.length ? `<div class="scrollx"><table class="to-cards"><thead><tr><th>Date</th><th>What</th><th>Pool</th><th>Amount</th></tr></thead><tbody>
+      ${entries.length ? `<div class="scrollx"><table class="to-cards"><thead><tr><th>Date</th><th>What</th><th>Pool</th><th>Amount</th><th></th></tr></thead><tbody>
         ${entries.map(e => `<tr><td data-label="Date">${lgDate(e.date)}</td><td data-label="What">${lgKindPill(e)} ${escapeHtml(e.text)}</td><td data-label="Pool">${LG_POOLS[e.pool]}</td>
-          <td data-label="Amount" style="font-weight:700;color:${e.amount < 0 ? 'var(--danger)' : 'var(--success)'}">${e.amount < 0 ? '−' : '+'}${lgPkr(Math.abs(e.amount))}</td></tr>`).join('')}
+          <td data-label="Amount" style="font-weight:700;color:${e.amount < 0 ? 'var(--danger)' : 'var(--success)'}">${e.amount < 0 ? '−' : '+'}${lgPkr(Math.abs(e.amount))}</td>
+          <td data-label="">${e.moveId ? `<button class="btn btn-outline btn-sm" onclick="lgOpenMove(null,'${e.moveId}')">Edit</button>` : e.expenseId ? `<button class="btn btn-outline btn-sm" onclick="lgOpenExpense('${e.expenseId}')">Edit</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div>` : `<div class="empty">Nothing yet. Add a payout in the Payouts tab.</div>`}
     </div>`;
 }
 function lgKindPill(e){
   return { payout: '<span class="lg-pill in">↓ received</span>', add: '<span class="lg-pill in">↓ added</span>', remove: '<span class="lg-pill out">↑ removed</span>',
-    send: e.amount < 0 ? '<span class="lg-pill mv">→ sent</span>' : '<span class="lg-pill mv">← in</span>', expense: '<span class="lg-pill out">↑ expense</span>' }[e.kind];
+    send: e.amount < 0 ? '<span class="lg-pill mv">→ sent</span>' : '<span class="lg-pill mv">← in</span>', expense: '<span class="lg-pill out">↑ expense</span>',
+    clear: '<span class="lg-pill mv">✔ cleared</span>' }[e.kind];
+}
+// Clear the Payment Gateway: its money was sent to the payment gateway (all of it, or the amount typed).
+function lgOpenClear(){
+  const bal = lgR2(lgBalances().gateway);
+  openModal(`<div class="modal"><h2>✔ Clear the Payment Gateway</h2>
+    <form onsubmit="return lgSaveClear(event)">
+      <div class="lg-split">Payment Gateway balance now: <b>${lgPkr(bal)}</b><br>Saving takes the amount out of the Payment Gateway and the total balance, as <b>sent to the payment gateway</b>. It shows in the reports.</div>
+      <div class="field-row" style="margin-top:12px;">
+        <div class="field"><label>Amount sent (Rs)</label><input id="lgClAmt" type="number" step="0.01" min="0.01" max="${bal}" required value="${bal}"></div>
+        <div class="field"><label>Sent on</label><input id="lgClDate" type="date" required value="${lgToday()}"></div>
+      </div>
+      <div class="field"><label>Note</label><input id="lgClNote" placeholder="optional, e.g. transaction ID"></div>
+      <div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button><button class="btn btn-primary" style="width:auto;">✔ Clear</button></div>
+    </form></div>`);
+}
+function lgSaveClear(e){
+  e.preventDefault();
+  lgSend('POST', '/ledger/moves', { type: 'send', from: 'gateway', to: 'outside', recipient: LG_CLEAR_TO, pkr: lgVal('lgClAmt'), date: lgVal('lgClDate'), note: lgVal('lgClNote') }, 'Payment Gateway cleared.');
+  return false;
 }
 function lgPoolOptions(sel, withOutside){
   return Object.keys(LG_POOLS).map(k => `<option value="${k}" ${sel === k ? 'selected' : ''}>${LG_POOLS[k]}</option>`).join('')
@@ -258,51 +286,109 @@ function lgDelete(path, what){
 }
 
 /* ---------------- Payouts ---------------- */
+// X pays every 2 weeks (e.g. 6 Nov, 20 Nov): pick one payout day, see and add only its records.
+const LG_DAY_CHIPS = 6; // newest payout days shown as buttons; older ones are in a list
+function lgAllDays(){
+  const all = lgPayDays();
+  if(lg.newDay && !all.some(d => d.day === lg.newDay)) all.push({ day: lg.newDay, list: [], t: lgSum([]) });
+  return all.sort((a, b) => a.day < b.day ? 1 : -1);
+}
+function lgSelDay(){
+  const all = lgAllDays().map(d => d.day), want = state.ui.params.lgDay;
+  return want && all.includes(want) ? want : (all[0] || null);
+}
+function lgPickDay(day){ state.ui.params.lgDay = day; render(); }
 function lgPayouts(){
   const f = state.ui.params.lgFilter || 'all';
-  let rows = lg.data.payouts.slice().sort((a, b) => a.date < b.date ? 1 : -1);
-  if(f !== 'all') rows = rows.filter(p => p.status === f);
-  return `<div class="toolbar" style="margin-bottom:14px;">
-      <select class="select-sm" onchange="state.ui.params.lgFilter=this.value; render();">
-        ${[['all', 'All'], ['pending', 'Waiting'], ['received', 'Received']].map(([k, l]) => `<option value="${k}" ${f === k ? 'selected' : ''}>${l}</option>`).join('')}
-      </select>
-      <button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgOpenPayout()">+ Add payout</button></div>
-    <div class="card">${rows.length ? `<div class="scrollx"><table class="to-cards"><thead><tr><th>Payout day</th><th>Member</th><th>X payout</th><th>Status</th><th>Rate</th><th>Received</th><th>→ Gateway</th><th>→ Community</th><th></th></tr></thead><tbody>
-      ${rows.map(p => { const s = lgPayoutSplit(p), su = lgSplitUsd(p.usd, p.rate); const rec = p.status === 'received'; return `<tr>
-        <td data-label="Payout day">${lgDate(p.date)}</td>
-        <td data-label="Member"><b>${escapeHtml(lgMemberName(p))}</b>${p.note ? `<div class="muted" style="font-size:11.5px;">${escapeHtml(p.note)}</div>` : ''}</td>
-        <td data-label="X payout">${lgUsd(p.usd)}</td>
-        <td data-label="Status">${rec ? `<span class="lg-pill in">✔ Received</span><div class="muted" style="font-size:11.5px;">${lgDate(p.receivedDate)}</div>` : '<span class="lg-pill wait">⏳ Waiting</span>'}</td>
-        <td data-label="Rate">${rec ? `${p.rate}% <span class="muted">(${lgUsd(p.usd * p.rate / 100)})</span>` : '—'}</td>
-        <td data-label="Received">${rec ? lgPkr(p.receivedPkr) : '—'}</td>
-        <td data-label="→ Gateway">${rec ? `${lgPkr(s.gateway)}${su.gateway ? `<div class="muted" style="font-size:11.5px;">${lgUsd(su.gateway)}</div>` : ''}` : '—'}</td>
-        <td data-label="→ Community">${rec ? `${lgPkr(s.community)}${su.community ? `<div class="muted" style="font-size:11.5px;">${lgUsd(su.community)}</div>` : ''}` : '—'}</td>
-        <td data-label="">${rec ? '' : `<button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgOpenReceive('${p.id}')">↓ Mark received</button>`}
-          <button class="btn btn-outline btn-sm" onclick="${rec ? `lgOpenReceive('${p.id}')` : `lgOpenPayout('${p.id}')`}">Edit</button>
-          <button class="btn btn-outline btn-sm" onclick="lgPrint('payout',{id:'${p.id}'})">PDF</button></td>
-      </tr>`; }).join('')}
-      </tbody></table></div>` : `<div class="empty">No payouts here yet.</div>`}</div>`;
+  const all = lgAllDays(), sel = lgSelDay(), d = all.find(x => x.day === sel);
+  const chip = x => `<button class="lg-day ${x.day === sel ? 'on' : ''}" onclick="lgPickDay('${x.day}')"><b>${lgDate(x.day)}</b>
+      <span>${x.t.n} member${x.t.n === 1 ? '' : 's'} · ${lgUsd(x.t.usd)}${x.t.waiting ? ` · <span class="wait">${x.t.waiting} waiting</span>` : ''}</span></button>`;
+  const older = all.slice(LG_DAY_CHIPS);
+  const days = `<div class="lg-days">${all.slice(0, LG_DAY_CHIPS).map(chip).join('')}
+      ${older.length ? `<select class="select-sm" onchange="if(this.value) lgPickDay(this.value)"><option value="">Older payouts…</option>${older.map(x => `<option value="${x.day}" ${x.day === sel ? 'selected' : ''}>${lgDate(x.day)} · ${x.t.n} member${x.t.n === 1 ? '' : 's'} · ${lgUsd(x.t.usd)}</option>`).join('')}</select>` : ''}
+      <button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgOpenNewDay()">+ New payout day</button></div>`;
+  if(!d) return days + `<div class="card"><div class="empty">No payouts yet. Press <b>+ New payout day</b>, pick the day X paid (e.g. 6 Nov), then add each member's payout to it.</div></div>`;
+  const rows = f === 'all' ? d.list : d.list.filter(p => p.status === f);
+  return days + `<div class="card">
+    <div class="lg-dayhead"><div><h3 style="margin:0;">💵 Payout of ${lgDate(d.day)}</h3>
+      <div class="muted" style="font-size:12.5px;">${d.t.n} member${d.t.n === 1 ? '' : 's'} · ${lgUsd(d.t.usd)} X payouts · ${lgPkr(d.t.pkr)} received${d.t.waiting ? ` · ${d.t.waiting} waiting` : ''}</div></div>
+      <div class="toolbar">
+        <select class="select-sm" onchange="state.ui.params.lgFilter=this.value; render();">
+          ${[['all', 'All'], ['pending', 'Waiting'], ['received', 'Received']].map(([k, l]) => `<option value="${k}" ${f === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgOpenPayout(null,'${d.day}')">+ Add member payout</button>
+        ${d.list.length ? `<button class="btn btn-outline btn-sm" style="width:auto;" onclick="lgPrint('payday',{day:'${d.day}'})">📄 PDF report</button>` : ''}</div></div>
+    ${rows.length ? `<div class="scrollx"><table class="to-cards"><thead><tr><th>Member</th><th>X payout</th><th>Status</th><th>Rate</th><th>Received</th><th>→ Gateway</th><th>→ Community</th><th></th></tr></thead><tbody>
+    ${rows.map(p => { const s = lgPayoutSplit(p), su = lgSplitUsd(p.usd, p.rate); const rec = p.status === 'received'; return `<tr>
+      <td data-label="Member"><b>${escapeHtml(lgMemberName(p))}</b>${p.note ? `<div class="muted" style="font-size:11.5px;">${escapeHtml(p.note)}</div>` : ''}</td>
+      <td data-label="X payout">${lgUsd(p.usd)}</td>
+      <td data-label="Status">${rec ? `<span class="lg-pill in">✔ Received</span><div class="muted" style="font-size:11.5px;">${lgDate(p.receivedDate)}</div>` : '<span class="lg-pill wait">⏳ Waiting</span>'}</td>
+      <td data-label="Rate">${rec ? `${p.rate}% <span class="muted">(${lgUsd(p.usd * p.rate / 100)})</span>` : '—'}</td>
+      <td data-label="Received">${rec ? lgPkr(p.receivedPkr) : '—'}</td>
+      <td data-label="→ Gateway">${rec ? `${lgPkr(s.gateway)}${su.gateway ? `<div class="muted" style="font-size:11.5px;">${lgUsd(su.gateway)}</div>` : ''}` : '—'}</td>
+      <td data-label="→ Community">${rec ? `${lgPkr(s.community)}${su.community ? `<div class="muted" style="font-size:11.5px;">${lgUsd(su.community)}</div>` : ''}` : '—'}</td>
+      <td data-label="">${rec ? '' : `<button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgOpenReceive('${p.id}')">↓ Mark received</button>`}
+        <button class="btn btn-outline btn-sm" onclick="${rec ? `lgOpenReceive('${p.id}')` : `lgOpenPayout('${p.id}')`}">Edit</button></td>
+    </tr>`; }).join('')}
+    </tbody></table></div>` : `<div class="empty">${d.list.length ? 'Nothing here with this filter.' : 'No members in this payout yet. Press <b>+ Add member payout</b>.'}</div>`}
+  </div>`;
 }
-function lgOpenPayout(id){
-  const members = lg.data.members.filter(m => (m.monetized && m.status === 'active') || (id && lg.data.payouts.find(p => p.id === id).memberId === m.id));
-  if(!members.length){ toast('No monetized members yet. Tick "Monetized" on a member in the Members page first.', true); return; }
-  const p = id ? lg.data.payouts.find(x => x.id === id) : { memberId: members[0].id, date: lgToday(), usd: '', note: '' };
-  openModal(`<div class="modal"><h2>${id ? 'Edit' : 'Add'} payout</h2>
-    <form onsubmit="return lgSavePayout(event,${id ? `'${id}'` : 'null'})">
-      <div class="field"><label>Member</label><select id="lgPMember" ${id ? 'disabled' : ''}>${members.map(m => `<option value="${m.id}" ${p.memberId === m.id ? 'selected' : ''}>${escapeHtml(m.name)}${m.xUsername ? ' (@' + escapeHtml(m.xUsername) + ')' : ''}</option>`).join('')}</select></div>
-      <div class="field-row">
-        <div class="field"><label>X payout (USD)</label><input id="lgPUsd" type="number" step="0.01" min="0.01" required value="${p.usd}" placeholder="e.g. 115"></div>
-        <div class="field"><label>Payout day</label><input id="lgPDate" type="date" required value="${p.date}"></div>
-      </div>
-      <div class="field"><label>Note</label><input id="lgPNote" value="${escapeHtml(p.note)}" placeholder="optional"></div>
-      <div class="muted" style="font-size:12px;">It's saved as ⏳ Waiting. When the money comes in, press ↓ Mark received and enter the Rs.</div>
-      <div class="modal-actions">${id ? `<button type="button" class="btn btn-outline" onclick="lgDelete('/ledger/payouts/${id}','payout')">Delete</button>` : ''}
-        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button><button class="btn btn-primary" style="width:auto;">Save</button></div>
+// Start the next payout day (X pays every 2 weeks, so 14 days after the last one is filled in).
+function lgOpenNewDay(){
+  const last = lgPayDays()[0], suggest = last ? lgAddDays(last.day, 14) : lgToday();
+  openModal(`<div class="modal"><h2>+ New payout day</h2>
+    <form onsubmit="return lgSaveNewDay(event)">
+      <div class="field"><label>The day X paid</label><input id="lgNDay" type="date" required value="${suggest}"></div>
+      <div class="muted" style="font-size:12px;">${last ? `X pays every 2 weeks; the last payout was ${lgDate(last.day)}, so ${lgDate(suggest)} is filled in. ` : ''}Next you add each member's payout to it.</div>
+      <div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button><button class="btn btn-primary" style="width:auto;">Open this payout</button></div>
     </form></div>`);
 }
-function lgSavePayout(e, id){
+function lgSaveNewDay(e){
   e.preventDefault();
-  lgSend(id ? 'PUT' : 'POST', '/ledger/payouts' + (id ? '/' + id : ''), { memberId: lgVal('lgPMember'), usd: lgVal('lgPUsd'), date: lgVal('lgPDate'), note: lgVal('lgPNote') }, 'Payout saved (waiting).');
+  const day = lgVal('lgNDay');
+  if(!day) return false;
+  lg.newDay = day; state.ui.params.lgDay = day;
+  closeModal(); render();
+  lgOpenPayout(null, day); // straight on to the first member
+  return false;
+}
+// Add a member to a payout day (only monetized members not in it yet), or edit one record.
+function lgOpenPayout(id, day){
+  const p = id ? lg.data.payouts.find(x => x.id === id) : null;
+  day = p ? p.date : (day || lgSelDay() || lgToday());
+  let members = [];
+  if(!p){
+    if(!lgMonetized().length){ toast('No monetized members yet. Tick "Monetized" on a member in the Members page first.', true); return; }
+    const inDay = new Set(lg.data.payouts.filter(x => x.date === day).map(x => x.memberId));
+    members = lg.data.members.filter(m => m.monetized && m.status === 'active' && !inDay.has(m.id)).sort((a, b) => a.name.localeCompare(b.name));
+    if(!members.length){ toast(`Every monetized member is already in the ${lgDate(day)} payout.`, true); return; }
+  }
+  openModal(`<div class="modal"><h2>${p ? 'Edit payout' : `Add to the payout of ${lgDate(day)}`}</h2>
+    <form onsubmit="return lgSavePayout(event,${p ? `'${id}'` : 'null'},'${day}')">
+      ${p ? `<div class="field"><label>Member</label><div><b>${escapeHtml(lgMemberName(p))}</b></div></div>`
+          : `<div class="field"><label>Member</label><select id="lgPMember">${members.map(m => `<option value="${m.id}">${escapeHtml(m.name)}${m.xUsername ? ' (@' + escapeHtml(m.xUsername) + ')' : ''}</option>`).join('')}</select>
+             <div class="muted" style="font-size:11.5px;margin-top:4px;">${members.length} monetized member${members.length === 1 ? '' : 's'} not in this payout yet.</div></div>`}
+      <div class="field-row">
+        <div class="field"><label>X payout (USD)</label><input id="lgPUsd" type="number" step="0.01" min="0.01" required value="${p ? p.usd : ''}" placeholder="e.g. 115"></div>
+        ${p ? `<div class="field"><label>Payout day</label><input id="lgPDate" type="date" required value="${p.date}"></div>` : ''}
+      </div>
+      <div class="field"><label>Note</label><input id="lgPNote" value="${p ? escapeHtml(p.note) : ''}" placeholder="optional"></div>
+      ${p ? '' : `<div class="muted" style="font-size:12px;">It's saved as ⏳ Waiting. When the money comes in, press ↓ Mark received and enter the Rs.</div>`}
+      <div class="modal-actions">${p ? `<button type="button" class="btn btn-outline" onclick="lgDelete('/ledger/payouts/${id}','payout')">Delete</button>` : ''}
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        ${p || members.length < 2 ? '' : `<button class="btn btn-outline" style="width:auto;" onclick="lg.again=true">Save + add next</button>`}
+        <button class="btn btn-primary" style="width:auto;">Save</button></div>
+    </form></div>`);
+}
+function lgSavePayout(e, id, day){
+  e.preventDefault();
+  const again = lg.again; lg.again = false;
+  const body = id ? { usd: lgVal('lgPUsd'), date: lgVal('lgPDate'), note: lgVal('lgPNote') }
+                  : { memberId: lgVal('lgPMember'), usd: lgVal('lgPUsd'), date: day, note: lgVal('lgPNote') };
+  lgSend(id ? 'PUT' : 'POST', '/ledger/payouts' + (id ? '/' + id : ''), body, id ? 'Payout saved.' : 'Added to the payout (waiting).').then(res => {
+    if(!res) return;
+    state.ui.params.lgDay = body.date; render(); // stay on (or move to) that payout day
+    if(again) lgOpenPayout(null, body.date);
+  });
   return false;
 }
 function lgRateRadios(name, sel){
@@ -367,17 +453,17 @@ function lgMembers(){
 /* ---------------- Expenses ---------------- */
 function lgExpenses(){
   const rows = lg.data.expenses.slice().sort((a, b) => a.date < b.date ? 1 : -1);
-  return `<div class="toolbar" style="margin-bottom:14px;"><button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgOpenExpense()">+ Add expense</button>
-      <button class="btn btn-outline btn-sm" style="width:auto;" onclick="lgPrint('expenses',{})">PDF</button></div>
+  return `<div class="toolbar" style="margin-bottom:14px;"><button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgOpenExpense()">+ Add expense</button></div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:12px;">An expense is taken out of <b>Community Funds</b> (or the Payment Gateway if you pick it) straight away, and shows in that payout's PDF report and in the full summary.</div>
     <div class="grid-stats"><div class="stat-card"><div class="label">Total expenses</div><div class="value blue">${lgPkr(rows.reduce((s, e) => s + e.pkr, 0))}</div><div class="muted" style="font-size:12px;">${rows.length} expense${rows.length === 1 ? '' : 's'}</div></div></div>
-    <div class="card">${rows.length ? `<div class="scrollx"><table class="to-cards"><thead><tr><th>Date</th><th>Category</th><th>Paid from</th><th>Note</th><th>Amount</th><th></th></tr></thead><tbody>
-      ${rows.map(e => `<tr><td data-label="Date">${lgDate(e.date)}</td><td data-label="Category">${escapeHtml(e.category)}</td><td data-label="Paid from">${LG_POOLS[e.pool]}</td>
+    <div class="card">${rows.length ? `<div class="scrollx"><table class="to-cards"><thead><tr><th>Date</th><th>Category</th><th>Taken from</th><th>Note</th><th>Amount</th><th></th></tr></thead><tbody>
+      ${rows.map(e => `<tr><td data-label="Date">${lgDate(e.date)}</td><td data-label="Category">${escapeHtml(e.category)}</td><td data-label="Taken from">${LG_POOLS[e.pool]}</td>
         <td data-label="Note" class="muted">${escapeHtml(e.note)}</td><td data-label="Amount"><b>${lgPkr(e.pkr)}</b></td>
         <td data-label=""><button class="btn btn-outline btn-sm" onclick="lgOpenExpense('${e.id}')">Edit</button></td></tr>`).join('')}
       </tbody></table></div>` : `<div class="empty">No expenses yet.</div>`}</div>`;
 }
 function lgOpenExpense(id){
-  const e = id ? lg.data.expenses.find(x => x.id === id) : { date: lgToday(), pkr: '', pool: 'account', category: LG_EXPENSE_CATEGORIES[0], note: '' };
+  const e = id ? lg.data.expenses.find(x => x.id === id) : { date: lgToday(), pkr: '', pool: 'community', category: LG_EXPENSE_CATEGORIES[0], note: '' };
   openModal(`<div class="modal"><h2>${id ? 'Edit' : 'Add'} expense</h2>
     <form onsubmit="return lgSaveExpense(event,${id ? `'${id}'` : 'null'})">
       <div class="field-row">
@@ -386,7 +472,7 @@ function lgOpenExpense(id){
       </div>
       <div class="field-row">
         <div class="field"><label>Category</label><select id="lgECat">${LG_EXPENSE_CATEGORIES.map(c => `<option ${e.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
-        <div class="field"><label>Paid from</label><select id="lgEPool">${lgPoolOptions(e.pool)}</select></div>
+        <div class="field"><label>Taken from</label><select id="lgEPool">${['community', 'gateway'].concat(e.pool === 'account' ? ['account'] : []).map(k => `<option value="${k}" ${e.pool === k ? 'selected' : ''}>${LG_POOLS[k]}</option>`).join('')}</select></div>
       </div>
       <div class="field"><label>Note</label><input id="lgENote" value="${escapeHtml(e.note)}" placeholder="what it was for"></div>
       <div class="modal-actions">${id ? `<button type="button" class="btn btn-outline" onclick="lgDelete('/ledger/expenses/${id}','expense')">Delete</button>` : ''}
@@ -399,114 +485,166 @@ function lgSaveExpense(ev, id){
   return false;
 }
 
-/* ---------------- Reports (print -> Save as PDF) ---------------- */
-function lgMonths(){
-  const s = new Set([lgMonthOf(lgToday())]);
-  lg.data.payouts.forEach(p => { s.add(lgMonthOf(p.date)); if(p.receivedDate) s.add(lgMonthOf(p.receivedDate)); });
-  lg.data.expenses.forEach(e => s.add(lgMonthOf(e.date))); lg.data.moves.forEach(m => s.add(lgMonthOf(m.date)));
-  return [...s].filter(Boolean).sort().reverse();
+/* ---------------- Reports (print -> Save as PDF) ----------------
+   Two reports: one X payout day (X pays on set days, e.g. 6 Nov and 20 Nov) and the full summary.
+   Expenses come out of their pool (Community Funds by default) and show in both. */
+function lgAddDays(iso, n){ const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function lgSum(list){
+  const t = { n: list.length, usd: 0, received: 0, pkr: 0, gateway: 0, community: 0, gatewayUsd: 0, communityUsd: 0, waiting: 0, waitingUsd: 0 };
+  list.forEach(p => {
+    t.usd += p.usd;
+    if(p.status === 'received'){ const s = lgPayoutSplit(p), su = lgSplitUsd(p.usd, p.rate); t.received++; t.pkr += p.receivedPkr; t.gateway += s.gateway; t.community += s.community; t.gatewayUsd += su.gateway; t.communityUsd += su.community; }
+    else { t.waiting++; t.waitingUsd += p.usd; }
+  });
+  return t;
 }
+// Every X payout day, newest first, with its payouts (A-Z) and totals.
+function lgPayDays(){
+  const by = {};
+  lg.data.payouts.forEach(p => { (by[p.date] = by[p.date] || []).push(p); });
+  return Object.keys(by).sort().reverse().map(day => ({ day, list: by[day].slice().sort((a, b) => lgMemberName(a).localeCompare(lgMemberName(b))), t: lgSum(by[day]) }));
+}
+// A payout day's report runs until the day before the next payout day (or up to now).
+function lgDayPeriod(day){
+  const next = lgPayDays().map(d => d.day).filter(d => d > day).sort()[0];
+  return { from: day, to: next ? lgAddDays(next, -1) : null };
+}
+function lgPeriodText(from, to){ return `${from ? lgDate(from) : 'the start'} – ${to ? lgDate(to) : 'now'}`; }
+// Money in each pool over a period: before it, what came in and went out, and after it.
+function lgPoolFlow(from, to){
+  const rows = {};
+  Object.keys(LG_POOLS).forEach(k => { rows[k] = { before: 0, payouts: 0, added: 0, out: 0, expenses: 0, after: 0 }; });
+  lgEntries().forEach(e => {
+    const r = rows[e.pool];
+    if(from && e.date < from){ r.before += e.amount; return; }
+    if(to && e.date > to) return;
+    if(e.kind === 'payout') r.payouts += e.amount;
+    else if(e.kind === 'expense') r.expenses -= e.amount;
+    else if(e.amount > 0) r.added += e.amount;
+    else r.out -= e.amount;
+  });
+  Object.values(rows).forEach(r => { r.after = r.before + r.payouts + r.added - r.out - r.expenses; });
+  return rows;
+}
+
 function lgReports(){
+  const days = lgPayDays();
   const range = pfx => `<div class="field-row"><div class="field"><label>From</label><input id="${pfx}From" type="date"></div><div class="field"><label>To</label><input id="${pfx}To" type="date"></div></div>`;
-  // Monetized members, plus anyone who already has a payout (so old statements can still be printed).
-  const members = lg.data.members.filter(m => m.monetized || lg.data.payouts.some(p => p.memberId === m.id));
-  return `<div class="muted" style="font-size:12.5px;margin-bottom:12px;">Each button opens the print window: choose <b>Save as PDF</b> as the printer. Empty dates = everything.</div>
-    <div class="grid-stats" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr));">
-      <div class="card" style="margin:0;"><h3>📘 Full summary</h3><div class="muted" style="font-size:12px;margin-bottom:10px;">Members who got a payout, money received, what went to the Payment Gateway and Community Funds, expenses and balances.</div>
-        ${range('lgFs')}<button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgPrint('summary',{from:lgVal('lgFsFrom'),to:lgVal('lgFsTo')})">PDF</button></div>
-      <div class="card" style="margin:0;"><h3>📅 Monthly</h3><div class="field"><label>Month</label><select id="lgMoSel">${lgMonths().map(m => `<option value="${m}">${lgMonthLabel(m)}</option>`).join('')}</select></div>
-        <button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgPrint('month',{month:lgVal('lgMoSel')})">PDF</button></div>
-      <div class="card" style="margin:0;"><h3>👤 Per member</h3>${members.length ? `<div class="field"><label>Member</label><select id="lgPmSel">${members.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('')}</select></div>${range('lgPm')}
-        <button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgPrint('member',{id:lgVal('lgPmSel'),from:lgVal('lgPmFrom'),to:lgVal('lgPmTo')})">PDF</button>` : '<div class="muted">No members yet.</div>'}</div>
-      <div class="card" style="margin:0;"><h3>🧾 Expenses</h3>${range('lgEx')}<button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgPrint('expenses',{from:lgVal('lgExFrom'),to:lgVal('lgExTo')})">PDF</button></div>
-      <div class="card" style="margin:0;"><h3>💵 One payout</h3><div class="muted" style="font-size:12px;">Use the <b>PDF</b> button on a row in Payouts.</div></div>
+  return `<div class="muted" style="font-size:12.5px;margin-bottom:12px;">Each PDF button opens the print window: pick <b>Save as PDF</b>. For a clean page, untick <b>Headers and footers</b> under More settings.</div>
+    <div class="grid-stats" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">
+      <div class="card" style="margin:0;"><h3>💵 Payout report</h3>
+        <div class="muted" style="font-size:12px;margin-bottom:10px;">One X payout day: every member paid that day, what came in, the Payment Gateway / Community Funds split, the expenses taken out until the next payout day, and each pool before and after.</div>
+        ${days.length ? `<div class="field"><label>Payout day</label><select id="lgPdSel">${days.map(d => `<option value="${d.day}">${lgDate(d.day)} · ${d.t.n} member${d.t.n === 1 ? '' : 's'} · ${lgUsd(d.t.usd)}</option>`).join('')}</select></div>
+        <button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgPrint('payday',{day:lgVal('lgPdSel')})">📄 PDF</button>` : '<div class="muted">No payouts yet.</div>'}</div>
+      <div class="card" style="margin:0;"><h3>📘 Full summary</h3>
+        <div class="muted" style="font-size:12px;margin-bottom:10px;">Every payout day, the members who got a payout, expenses, board entries and the pools. Empty dates = everything.</div>
+        ${range('lgFs')}<button class="btn btn-primary btn-sm" style="width:auto;" onclick="lgPrint('summary',{from:lgVal('lgFsFrom'),to:lgVal('lgFsTo')})">📄 PDF</button></div>
     </div>`;
 }
-function lgRangeText(from, to){ return from || to ? `${from ? lgDate(from) : 'start'} to ${to ? lgDate(to) : 'today'}` : 'All dates'; }
-function lgBox(l, v){ return `<div class="lgp-box"><div class="l">${l}</div><div class="v">${v}</div></div>`; }
-function lgHeader(title, sub){ return `<h1>${escapeHtml(state.settings.communityName || 'Bitbase')} · ${title}</h1><div class="lgp-meta">${sub} · made ${lgDate(lgToday())}</div>`; }
-function lgPayoutTable(list){
-  if(!list.length) return '<div class="lgp-meta">No payouts.</div>';
-  const tot = { usd: 0, pkr: 0, gw: 0, cf: 0 };
-  return `<table><thead><tr><th>Payout day</th><th>Member</th><th>X payout</th><th>Status</th><th>Rate</th><th>Received</th><th>Payment Gateway</th><th>Community Funds</th></tr></thead><tbody>
-    ${list.map(p => { const s = lgPayoutSplit(p), su = lgSplitUsd(p.usd, p.rate); tot.usd += p.usd; tot.pkr += p.receivedPkr || 0; tot.gw += s.gateway; tot.cf += s.community;
-      const rec = p.status === 'received';
-      return `<tr><td>${lgDate(p.date)}</td><td>${escapeHtml(lgMemberName(p))}</td><td class="n">${lgUsd(p.usd)}</td><td>${rec ? 'Received ' + lgDate(p.receivedDate) : 'Waiting'}</td>
-        <td>${rec ? p.rate + '%' : '—'}</td><td class="n">${rec ? lgPkr(p.receivedPkr) : '—'}</td>
-        <td class="n">${lgPkr(s.gateway)}${rec && su.gateway ? ` (${lgUsd(su.gateway)})` : ''}</td><td class="n">${lgPkr(s.community)}${rec && su.community ? ` (${lgUsd(su.community)})` : ''}</td></tr>`; }).join('')}
-    <tr class="tot"><td colspan="2">Total</td><td class="n">${lgUsd(tot.usd)}</td><td></td><td></td><td class="n">${lgPkr(tot.pkr)}</td><td class="n">${lgPkr(tot.gw)}</td><td class="n">${lgPkr(tot.cf)}</td></tr></tbody></table>`;
+
+/* report building blocks (styled by #ledgerPrint in styles.css) */
+function lgSm(t){ return t ? `<span class="sm">${t}</span>` : ''; }
+function lgOrDash(v, txt){ return v ? txt : '<span class="dash">—</span>'; }
+function lgDoc(title, sub, period, body){
+  const name = escapeHtml(state.settings.communityName || 'Bitbase');
+  return `<div class="lgp">
+    <div class="lgp-top"><div class="lgp-brand"><div class="lgp-logo">${name.charAt(0).toUpperCase()}</div><div><div class="lgp-org">${name}</div><div class="lgp-tag">Ledger</div></div></div>
+      <div class="lgp-title"><h1>${title}</h1><div>${sub}</div></div></div>
+    <div class="lgp-meta"><span>Period: <b>${period}</b></span><span>Made ${lgDate(lgToday())}</span><span>$ = X payout · Rs = received in PKR</span></div>
+    ${body}
+    <div class="lgp-foot">${name} Ledger · ${title} · private, admins only</div></div>`;
 }
-function lgExpenseTable(list){
-  if(!list.length) return '<div class="lgp-meta">No expenses.</div>';
-  return `<table><thead><tr><th>Date</th><th>Category</th><th>Paid from</th><th>Note</th><th>Amount</th></tr></thead><tbody>
-    ${list.map(e => `<tr><td>${lgDate(e.date)}</td><td>${escapeHtml(e.category)}</td><td>${LG_POOLS[e.pool]}</td><td>${escapeHtml(e.note)}</td><td class="n">${lgPkr(e.pkr)}</td></tr>`).join('')}
-    <tr class="tot"><td colspan="4">Total</td><td class="n">${lgPkr(list.reduce((s, e) => s + e.pkr, 0))}</td></tr></tbody></table>`;
+function lgKpis(items){
+  return `<div class="lgp-kpis">${items.map(([l, v, s, cls]) => `<div class="lgp-kpi ${cls || ''}"><div class="l">${l}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`).join('')}</div>`;
 }
-function lgMovesTable(list){
+function lgH2(t, note){ return `<h2><span>${t}</span>${note ? `<small>${note}</small>` : ''}</h2>`; }
+function lgPaidTable(list){
+  if(!list.length) return '<div class="lgp-empty">No payouts.</div>';
+  const t = lgSum(list);
+  return `<table><thead><tr><th class="c">#</th><th>Member</th><th class="n">X payout</th><th class="n">Gives</th><th class="n">Received</th><th class="n">Payment Gateway</th><th class="n">Community Funds</th></tr></thead><tbody>
+    ${list.map((p, i) => { const m = lgMember(p.memberId) || {}, rec = p.status === 'received', s = lgPayoutSplit(p), su = lgSplitUsd(p.usd, p.rate);
+      return `<tr><td class="c">${i + 1}</td><td><b>${escapeHtml(lgMemberName(p))}</b>${lgSm(m.xUsername ? '@' + escapeHtml(m.xUsername) : '')}</td>
+        <td class="n">${lgUsd(p.usd)}</td>
+        <td class="n">${rec ? `${p.rate}%${lgSm(lgUsd(p.usd * p.rate / 100))}` : '<span class="dash">—</span>'}</td>
+        <td class="n">${rec ? `${lgPkr(p.receivedPkr)}${lgSm('on ' + lgDate(p.receivedDate))}` : '<span class="pill wait">Waiting</span>'}</td>
+        <td class="n">${lgOrDash(s.gateway, `${lgPkr(s.gateway)}${lgSm(lgUsd(su.gateway))}`)}</td>
+        <td class="n">${lgOrDash(s.community, `${lgPkr(s.community)}${lgSm(lgUsd(su.community))}`)}</td></tr>`; }).join('')}
+    <tr class="tot"><td></td><td>Total · ${t.n} member${t.n === 1 ? '' : 's'}</td><td class="n">${lgUsd(t.usd)}</td><td></td><td class="n">${lgPkr(t.pkr)}</td>
+      <td class="n">${lgPkr(t.gateway)}${lgSm(lgUsd(t.gatewayUsd))}</td><td class="n">${lgPkr(t.community)}${lgSm(lgUsd(t.communityUsd))}</td></tr></tbody></table>`;
+}
+function lgExpTable(list){
+  if(!list.length) return '<div class="lgp-empty">No expenses in this period.</div>';
+  return `<table><thead><tr><th>Date</th><th>What</th><th>Taken from</th><th class="n">Amount</th></tr></thead><tbody>
+    ${list.map(e => `<tr><td>${lgDate(e.date)}</td><td><b>${escapeHtml(e.category)}</b>${lgSm(escapeHtml(e.note))}</td><td>${LG_POOLS[e.pool]}</td><td class="n neg">− ${lgPkr(e.pkr)}</td></tr>`).join('')}
+    <tr class="tot"><td colspan="3">Total expenses</td><td class="n neg">− ${lgPkr(list.reduce((s, e) => s + e.pkr, 0))}</td></tr></tbody></table>`;
+}
+function lgMoveTable(list){
   if(!list.length) return '';
-  return `<h2>Board entries (add / send / remove)</h2><table><thead><tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th>Note</th><th>Amount</th></tr></thead><tbody>
-    ${list.map(m => `<tr><td>${lgDate(m.date)}</td><td>${m.type}</td><td>${m.from ? LG_POOLS[m.from] : '—'}</td><td>${m.to ? (m.to === 'outside' ? escapeHtml(m.recipient || 'outside') : LG_POOLS[m.to]) : '—'}</td><td>${escapeHtml(m.note)}</td><td class="n">${lgPkr(m.pkr)}</td></tr>`).join('')}</tbody></table>`;
+  const what = m => lgIsClear(m) ? 'Payment Gateway cleared: sent to the payment gateway' : m.type === 'add' ? `Added to ${LG_POOLS[m.to]}` : m.type === 'remove' ? `Removed from ${LG_POOLS[m.from]}`
+    : `${LG_POOLS[m.from]} → ${m.to === 'outside' ? escapeHtml(m.recipient || 'outside') : LG_POOLS[m.to]}`;
+  return lgH2('Board entries') + `<table><thead><tr><th>Date</th><th>Entry</th><th>Note</th><th class="n">Amount</th></tr></thead><tbody>
+    ${list.map(m => `<tr><td>${lgDate(m.date)}</td><td>${what(m)}</td><td>${escapeHtml(m.note) || '<span class="dash">—</span>'}</td><td class="n">${lgPkr(m.pkr)}</td></tr>`).join('')}</tbody></table>`;
+}
+function lgFlowTable(from, to){
+  const f = lgPoolFlow(from, to), keys = Object.keys(LG_POOLS);
+  const tot = { before: 0, payouts: 0, added: 0, out: 0, expenses: 0, after: 0 };
+  keys.forEach(k => Object.keys(tot).forEach(c => { tot[c] += f[k][c]; }));
+  const cell = (v, sign) => v ? `${sign}${lgPkr(v)}` : '<span class="dash">—</span>';
+  const row = (label, r, cls) => `<tr class="${cls || ''}"><td>${label}</td><td class="n">${lgPkr(r.before)}</td><td class="n pos">${cell(r.payouts, '+ ')}</td><td class="n pos">${cell(r.added, '+ ')}</td>
+    <td class="n neg">${cell(r.out, '− ')}</td><td class="n neg">${cell(r.expenses, '− ')}</td><td class="n"><b>${lgPkr(r.after)}</b></td></tr>`;
+  return `<table><thead><tr><th>Pool</th><th class="n">Before${from ? ' ' + lgDate(from) : ''}</th><th class="n">From payouts</th><th class="n">Added / in</th><th class="n">Sent / removed</th><th class="n">Expenses</th><th class="n">After${to ? ' ' + lgDate(to) : ' (now)'}</th></tr></thead><tbody>
+    ${keys.map(k => row(`<span class="dot ${k}"></span>${LG_POOLS[k]}`, f[k])).join('')}${row('Total', tot, 'tot')}</tbody></table>`;
 }
 function lgReportHtml(kind, o){
-  const byDate = (a, b) => a.date < b.date ? -1 : 1;
+  const byDate = (a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
   const d = lg.data;
-  if(kind === 'payout'){
-    const p = d.payouts.find(x => x.id === o.id), s = lgPayoutSplit(p), su = lgSplitUsd(p.usd, p.rate), m = lgMember(p.memberId) || {};
-    const rec = p.status === 'received';
-    return lgHeader('Payout', `${escapeHtml(lgMemberName(p))}${m.xUsername ? ' (@' + escapeHtml(m.xUsername) + ')' : ''} · payout day ${lgDate(p.date)}`) +
-      `<table><tbody><tr><th>Member</th><td>${escapeHtml(lgMemberName(p))}</td></tr><tr><th>X payout</th><td>${lgUsd(p.usd)}</td></tr>
-        <tr><th>Status</th><td>${rec ? 'Received on ' + lgDate(p.receivedDate) : 'Waiting'}</td></tr>
-        ${rec ? `<tr><th>Rate</th><td>${p.rate}% = ${lgUsd(p.usd * p.rate / 100)}</td></tr>
-        <tr><th>Received</th><td>${lgPkr(p.receivedPkr)} (≈ Rs ${lgR2(p.receivedPkr / (p.usd * p.rate / 100))} per $)</td></tr>
-        <tr><th>→ Payment Gateway</th><td>${lgPkr(s.gateway)}${su.gateway ? ` (${lgUsd(su.gateway)})` : ''}</td></tr>
-        <tr><th>→ Community Funds</th><td>${lgPkr(s.community)}${su.community ? ` (${lgUsd(su.community)})` : ''}</td></tr>` : ''}
-        ${p.note ? `<tr><th>Note</th><td>${escapeHtml(p.note)}</td></tr>` : ''}</tbody></table>`;
+  if(kind === 'payday'){
+    const day = lgPayDays().find(x => x.day === o.day) || { day: o.day, list: [], t: lgSum([]) };
+    const { from, to } = lgDayPeriod(o.day), t = day.t;
+    const exps = d.expenses.filter(e => lgInRange(e.date, from, to)).sort(byDate);
+    const moves = d.moves.filter(m => lgInRange(m.date, from, to)).sort(byDate);
+    const expTotal = exps.reduce((s, e) => s + e.pkr, 0);
+    return lgDoc('Payout report', `X payout of ${lgDate(o.day)}`, lgPeriodText(from, to),
+      lgKpis([['Members paid', t.n], ['X payouts', lgUsd(t.usd)], ['Received', lgPkr(t.pkr), `${t.received} of ${t.n} payouts`], ['Waiting', t.waiting, t.waiting ? lgUsd(t.waitingUsd) + ' not in yet' : 'all received']]) +
+      lgKpis([['→ Payment Gateway', lgPkr(t.gateway), lgUsd(t.gatewayUsd), 'gw'], ['→ Community Funds', lgPkr(t.community), lgUsd(t.communityUsd), 'cf'], ['Expenses', expTotal ? '− ' + lgPkr(expTotal) : lgPkr(0), `${exps.length} in this period`, 'ex']]) +
+      lgH2(`Members paid on ${lgDate(o.day)}`, `${t.n} member${t.n === 1 ? '' : 's'}`) + lgPaidTable(day.list) +
+      lgH2('Expenses', 'taken from Community Funds unless marked') + lgExpTable(exps) +
+      lgMoveTable(moves) +
+      lgH2('Money in each pool', lgPeriodText(from, to)) + lgFlowTable(from, to));
   }
-  if(kind === 'member'){
-    const m = lgMember(o.id) || {};
-    const list = d.payouts.filter(p => p.memberId === o.id && lgInRange(p.date, o.from, o.to)).sort(byDate);
-    const rec = list.filter(p => p.status === 'received');
-    return lgHeader('Member statement', `${escapeHtml(m.name || '')}${m.xUsername ? ' (@' + escapeHtml(m.xUsername) + ')' : ''} · ${lgRangeText(o.from, o.to)}`) +
-      `<div class="lgp-boxes">${lgBox('Payouts', list.length)}${lgBox('X payouts', lgUsd(list.reduce((s, p) => s + p.usd, 0)))}${lgBox('Received', lgPkr(rec.reduce((s, p) => s + p.receivedPkr, 0)))}${lgBox('Waiting', list.length - rec.length)}</div>
-      <h2>Payouts</h2>${lgPayoutTable(list)}`;
-  }
-  if(kind === 'expenses'){
-    const list = d.expenses.filter(e => lgInRange(e.date, o.from, o.to)).sort(byDate);
-    const byCat = {}; list.forEach(e => byCat[e.category] = (byCat[e.category] || 0) + e.pkr);
-    return lgHeader('Expenses', lgRangeText(o.from, o.to)) +
-      `<div class="lgp-boxes">${lgBox('Total', lgPkr(list.reduce((s, e) => s + e.pkr, 0)))}${lgBox('Expenses', list.length)}</div>
-      ${Object.keys(byCat).length ? `<h2>By category</h2><table><thead><tr><th>Category</th><th>Amount</th></tr></thead><tbody>${Object.keys(byCat).sort().map(c => `<tr><td>${escapeHtml(c)}</td><td class="n">${lgPkr(byCat[c])}</td></tr>`).join('')}</tbody></table>` : ''}
-      <h2>All expenses</h2>${lgExpenseTable(list)}`;
-  }
-  let from = o.from, to = o.to, title = 'Full summary', sub = lgRangeText(o.from, o.to);
-  if(kind === 'month'){ from = o.month + '-01'; to = o.month + '-31'; title = 'Monthly report'; sub = lgMonthLabel(o.month); }
-  const t = lgTotals(from, to);
-  const pays = d.payouts.filter(p => lgInRange(p.date, from, to)).sort(byDate);
+  // Full summary (optionally between two dates).
+  const from = o.from || '', to = o.to || '';
+  const pays = d.payouts.filter(p => lgInRange(p.date, from, to));
+  const days = lgPayDays().filter(x => lgInRange(x.day, from, to)).reverse();
   const exps = d.expenses.filter(e => lgInRange(e.date, from, to)).sort(byDate);
   const moves = d.moves.filter(m => lgInRange(m.date, from, to)).sort(byDate);
-  const b = lgBalances(to);
+  const t = lgSum(pays), expTotal = exps.reduce((s, e) => s + e.pkr, 0);
   // Only members who actually got a payout in this period are listed.
   const byMember = {};
-  pays.forEach(p => { const k = p.memberId; byMember[k] = byMember[k] || { name: lgMemberName(p), n: 0, usd: 0, pkr: 0, rec: 0 }; byMember[k].n++; byMember[k].usd += p.usd; if(p.status === 'received'){ byMember[k].rec++; byMember[k].pkr += p.receivedPkr; } });
-  const mRows = Object.values(byMember).sort((a, b2) => a.name.localeCompare(b2.name));
-  return lgHeader(title, sub) +
-    `<div class="lgp-boxes">${lgBox('Members paid', t.members.size)}${lgBox('Payouts', t.payouts)}${lgBox('X payouts', lgUsd(t.payoutUsd))}${lgBox('Received', `${t.received} · ${lgPkr(t.receivedPkr)}`)}${lgBox('Waiting', `${t.pending} · ${lgUsd(t.pendingUsd)}`)}</div>
-    <div class="lgp-boxes">${lgBox('→ Payment Gateway', `${lgPkr(t.gateway)} (${lgUsd(t.gatewayUsd)})`)}${lgBox('→ Community Funds', `${lgPkr(t.community)} (${lgUsd(t.communityUsd)})`)}${lgBox('Expenses', lgPkr(t.expensesPkr))}${lgBox('Received − expenses', lgPkr(t.receivedPkr - t.expensesPkr))}</div>
-    <h2>Balances${to ? ' on ' + lgDate(to > lgToday() ? lgToday() : to) : ' now'}</h2>
-    <div class="lgp-boxes">${lgBox('Total balance', lgPkr(b.gateway + b.account + b.community))}${Object.keys(LG_POOLS).map(k => lgBox(LG_POOLS[k], lgPkr(b[k]))).join('')}</div>
-    <h2>Members who got a payout (${mRows.length})</h2>
-    ${mRows.length ? `<table><thead><tr><th>Member</th><th>Payouts</th><th>X payouts</th><th>Received</th><th>Received (Rs)</th></tr></thead><tbody>
-      ${mRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td class="n">${r.n}</td><td class="n">${lgUsd(r.usd)}</td><td class="n">${r.rec}</td><td class="n">${lgPkr(r.pkr)}</td></tr>`).join('')}</tbody></table>` : '<div class="lgp-meta">No payouts in this period.</div>'}
-    <h2>Payouts</h2>${lgPayoutTable(pays)}
-    <h2>Expenses</h2>${lgExpenseTable(exps)}
-    ${lgMovesTable(moves)}`;
+  pays.forEach(p => { (byMember[p.memberId] = byMember[p.memberId] || []).push(p); });
+  const mRows = Object.values(byMember).map(list => ({ name: lgMemberName(list[0]), m: lgMember(list[0].memberId) || {}, t: lgSum(list) })).sort((a, b) => a.name.localeCompare(b.name));
+  const sum = (rows, k) => rows.reduce((s, r) => s + r.t[k], 0);
+  return lgDoc('Full summary', from || to ? lgPeriodText(from, to) : 'Everything so far', from || to ? lgPeriodText(from, to) : 'All dates',
+    lgKpis([['Payout days', days.length], ['Members paid', mRows.length], ['X payouts', lgUsd(t.usd), `${t.n} payouts`], ['Received', lgPkr(t.pkr), `${t.received} of ${t.n} payouts`], ['Waiting', t.waiting, t.waiting ? lgUsd(t.waitingUsd) : 'all received']]) +
+    lgKpis([['→ Payment Gateway', lgPkr(t.gateway), lgUsd(t.gatewayUsd), 'gw'], ['→ Community Funds', lgPkr(t.community), lgUsd(t.communityUsd), 'cf'], ['Expenses', expTotal ? '− ' + lgPkr(expTotal) : lgPkr(0), `${exps.length} expense${exps.length === 1 ? '' : 's'}`, 'ex']]) +
+    lgH2('Payout days', `${days.length} X payout${days.length === 1 ? '' : 's'}`) +
+    (days.length ? `<table><thead><tr><th>Payout day</th><th class="n">Members</th><th class="n">X payouts</th><th class="n">Received</th><th class="n">Payment Gateway</th><th class="n">Community Funds</th><th class="n">Waiting</th></tr></thead><tbody>
+      ${days.map(x => `<tr><td><b>${lgDate(x.day)}</b></td><td class="n">${x.t.n}</td><td class="n">${lgUsd(x.t.usd)}</td><td class="n">${lgPkr(x.t.pkr)}</td><td class="n">${lgPkr(x.t.gateway)}${lgSm(lgUsd(x.t.gatewayUsd))}</td><td class="n">${lgPkr(x.t.community)}${lgSm(lgUsd(x.t.communityUsd))}</td><td class="n">${x.t.waiting ? `<span class="pill wait">${x.t.waiting} · ${lgUsd(x.t.waitingUsd)}</span>` : '<span class="pill ok">All in</span>'}</td></tr>`).join('')}
+      <tr class="tot"><td>Total</td><td class="n">${t.n}</td><td class="n">${lgUsd(t.usd)}</td><td class="n">${lgPkr(t.pkr)}</td><td class="n">${lgPkr(t.gateway)}</td><td class="n">${lgPkr(t.community)}</td><td class="n">${t.waiting ? lgUsd(t.waitingUsd) : ''}</td></tr></tbody></table>` : '<div class="lgp-empty">No payouts in this period.</div>') +
+    lgH2(`Members who got a payout (${mRows.length})`) +
+    (mRows.length ? `<table><thead><tr><th class="c">#</th><th>Member</th><th class="n">Payouts</th><th class="n">X payouts</th><th class="n">Received</th><th class="n">Payment Gateway</th><th class="n">Community Funds</th></tr></thead><tbody>
+      ${mRows.map((r, i) => `<tr><td class="c">${i + 1}</td><td><b>${escapeHtml(r.name)}</b>${lgSm(r.m.xUsername ? '@' + escapeHtml(r.m.xUsername) : '')}</td><td class="n">${r.t.n}${r.t.waiting ? lgSm(r.t.waiting + ' waiting') : ''}</td><td class="n">${lgUsd(r.t.usd)}</td><td class="n">${lgOrDash(r.t.pkr, lgPkr(r.t.pkr))}</td><td class="n">${lgOrDash(r.t.gateway, lgPkr(r.t.gateway))}</td><td class="n">${lgOrDash(r.t.community, lgPkr(r.t.community))}</td></tr>`).join('')}
+      <tr class="tot"><td></td><td>Total</td><td class="n">${sum(mRows, 'n')}</td><td class="n">${lgUsd(sum(mRows, 'usd'))}</td><td class="n">${lgPkr(sum(mRows, 'pkr'))}</td><td class="n">${lgPkr(sum(mRows, 'gateway'))}</td><td class="n">${lgPkr(sum(mRows, 'community'))}</td></tr></tbody></table>` : '<div class="lgp-empty">No payouts in this period.</div>') +
+    lgH2('Expenses', 'taken from Community Funds unless marked') + lgExpTable(exps) +
+    lgMoveTable(moves) +
+    lgH2('Money in each pool', from || to ? lgPeriodText(from, to) : 'all dates') + lgFlowTable(from, to));
 }
 function lgPrint(kind, o){
   let box = document.getElementById('ledgerPrint');
   if(!box){ box = document.createElement('div'); box.id = 'ledgerPrint'; document.body.appendChild(box); }
   box.innerHTML = lgReportHtml(kind, o || {});
-  const old = document.title;
-  document.title = `ledger-${kind}-${lgToday()}`; // the default PDF file name
+  const old = document.title, name = state.settings.communityName || 'Bitbase';
+  document.title = kind === 'payday' ? `${name} payout report ${o.day}` : `${name} ledger summary ${lgToday()}`; // the default PDF file name
   document.body.classList.add('ledger-printing');
   const done = () => { document.body.classList.remove('ledger-printing'); document.title = old; window.removeEventListener('afterprint', done); };
   window.addEventListener('afterprint', done);

@@ -602,7 +602,7 @@ function escapeHtml(s){
 async function logout(){
   try{ await apiSend('POST', '/logout'); }catch(e){ /* ignore — we're logging out regardless */ }
   // Forget the ledger in this tab too: the next admin has to enter the ledger password.
-  if(typeof lg !== 'undefined'){ lg.status = null; lg.data = null; lg.lockForm = 'unlock'; }
+  if(typeof lg !== 'undefined'){ lg.status = null; lg.data = null; lg.lockForm = 'unlock'; lg.newDay = null; }
   await fetchState();
   render();
 }

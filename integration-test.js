@@ -1066,8 +1066,16 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(w.lg.data.members.find(m => m.id === tanvir).rate !== 20 || w.lg.data.members.find(m => m.id === lisa).rate !== 15) throw new Error('member rate should be remembered from the last payout');
     w.state.ui.params.lgTab = 'payouts'; w.render(); await wait(50);
     if(!html(w).includes('Rs 4,897.50') || !html(w).includes('$17.25')) throw new Error('Payouts tab should show the split in Rs and $');
+    if(!html(w).includes('Payout of ') || !html(w).includes('+ New payout day')) throw new Error('Payouts tab should show one payout day at a time');
     const sum = w.lgReportHtml('summary', {});
     if(!sum.includes('Members who got a payout (3)')) throw new Error('summary should list the 3 members who got a payout');
+    // The payout-day report: its members, the expense taken from Community Funds, and the pools after.
+    const day = w.lgReportHtml('payday', { day: w.dateStr(0) });
+    if(!day.includes('Payout report') || !day.includes('Tanvir') || !day.includes('Rs 1,200.00') || !day.includes('Money in each pool')) throw new Error('payout report incomplete');
+    // Clear: the Payment Gateway money was sent to the payment gateway -> its balance is 0.
+    await w.apiSend('POST', '/ledger/moves', { type: 'send', from: 'gateway', to: 'outside', recipient: w.eval('LG_CLEAR_TO'), pkr: w.lgBalances().gateway, date: w.dateStr(0) });
+    w.lg.data = await w.apiGet('/ledger');
+    if(w.lgBalances().gateway !== 0 || !w.lgEntries().some(e => e.kind === 'clear')) throw new Error('clear should empty the Payment Gateway');
   });
 
   await tryAsync('Ledger: the password hash never reaches the browser (data or backup)', async () => {
