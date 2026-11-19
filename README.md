@@ -71,7 +71,7 @@ bitbase-server/
   Reports print to PDF (full summary, monthly, per member, expenses, one payout).
   - Admins only, behind its **own ledger password** (created the first time it's
     opened, confirmed with the admin login; changed with the current one; reset
-    with the admin login). It locks after 30 minutes without use and on logout.
+    with the admin login). It locks after 10 minutes without use and on logout.
   - Stored in `DATA_DIR`: `ledger_payouts.csv`, `ledger_expenses.csv`,
     `ledger_moves.csv`, `ledger_settings.json` (the password only as a bcrypt
     hash). Every change also saves that day's full copy in `ledger_backups/`

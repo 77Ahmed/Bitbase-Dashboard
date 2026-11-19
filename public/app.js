@@ -479,6 +479,8 @@ function goto(view, params){
     toast('You can only view your own weekly report and payouts.', true);
     return;
   }
+  // Opening the Ledger reloads it, so members ticked "Monetized" since then show up (public/ledger.js).
+  if(view === 'ledger' && view !== state.ui.view && typeof lgOnOpen === 'function') lgOnOpen();
   // Remember the page a member's detail was opened from (with its date/week/filters and
   // scroll position), so that page's Back button returns to the same spot.
   if(view === 'memberDetail' && state.ui.view !== 'memberDetail'){

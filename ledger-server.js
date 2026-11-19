@@ -15,7 +15,7 @@
  * first time the Ledger is opened (confirmed with the admin's login password), stored only
  * as a bcrypt hash in ledger_settings.json and never sent to the browser. Changing it
  * needs the current ledger password; a forgotten one is reset with the admin's login
- * password. An unlock lasts 30 minutes of inactivity, per browser session.
+ * password. An unlock lasts 10 minutes of inactivity, per browser session.
  * ============================================================================ */
 'use strict';
 
@@ -25,7 +25,7 @@ const bcrypt = require('bcryptjs');
 
 const RATES = { 20: { gateway: 15, community: 5 }, 15: { gateway: 15 }, 5: { community: 5 } };
 const POOLS = ['gateway', 'account', 'community'];
-const UNLOCK_MS = 30 * 60 * 1000;      // unlock ends after 30 minutes without ledger use
+const UNLOCK_MS = 10 * 60 * 1000;      // unlock ends after 10 minutes without ledger use
 const MAX_TRIES = 5, LOCKOUT_MS = 5 * 60 * 1000;
 const BACKUP_DAYS = 90;
 
@@ -170,7 +170,8 @@ module.exports = function registerLedger(app, d){
 
   /* ---------- read ---------- */
   function membersList(){
-    return allMembers().map(m => ({ id: m.id, name: m.displayName, username: m.username, xUsername: m.xUsername || '', status: m.status,
+    // Every member is sent (old payouts keep their names); the page only offers monetized ones.
+    return allMembers().map(m => ({ id: m.id, name: m.displayName, username: m.username, xUsername: m.xUsername || '', status: m.status, monetized: !!m.monetized,
       rate: RATES[L.settings.memberRates[m.id]] ? Number(L.settings.memberRates[m.id]) : 20 }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   }
@@ -183,6 +184,7 @@ module.exports = function registerLedger(app, d){
     const usd = r2(body.usd), date = body.date, memberId = body.memberId;
     const m = getUser(memberId);
     if(!existing && (!m || m.role !== 'member')) return { error: 'Pick a member.' };
+    if(!existing && !m.monetized) return { error: 'Only monetized members get payouts. Mark them monetized on the Members page first.' };
     if(!(usd > 0)) return { error: 'Enter the payout in USD (above 0).' };
     if(!isDate(date)) return { error: 'Enter a valid payout day.' };
     const out = { usd, date, note: String(body.note || '').trim().slice(0, 300) };
