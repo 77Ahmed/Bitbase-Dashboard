@@ -674,16 +674,43 @@ function lgSettings(){
       <div class="toolbar">
         <button class="btn btn-outline btn-sm" style="width:auto;" onclick="lgDownloadBackup()">⬇ Download backup</button>
         <label class="btn btn-outline btn-sm" style="width:auto;cursor:pointer;">⬆ Restore a backup<input type="file" accept=".json,application/json" style="display:none" onchange="lgRestoreFile(event)"></label>
-      </div></div>`;
+      </div></div>
+    <div class="card" style="max-width:520px;border:1.5px solid var(--danger-bg);"><h3>🧹 Clear all ledger data</h3>
+      <div class="muted" style="font-size:12.5px;margin-bottom:10px;">Deletes every payout, expense and board entry so the Ledger starts empty
+        (now: ${lg.data.payouts.length} payouts, ${lg.data.expenses.length} expenses, ${lg.data.moves.length} board entries).
+        The ledger password, USD rate and members' usual % stay. A backup file downloads to this PC first and the server keeps a copy too,
+        so it can be brought back with <b>⬆ Restore a backup</b>.</div>
+      <form onsubmit="return lgClearAll(event)">
+        <div class="field-row">
+          <div class="field"><label>Ledger password</label><input id="lgClrPw" type="password" autocomplete="current-password" required></div>
+          <div class="field"><label>Type CLEAR to confirm</label><input id="lgClrTxt" autocomplete="off" required placeholder="CLEAR"></div>
+        </div>
+        <button class="btn btn-danger btn-sm" style="width:auto;">🧹 Clear all ledger data</button></form></div>`;
 }
 function lgSaveSettings(e){ e.preventDefault(); lgSend('PUT', '/ledger/settings', { usdRate: lgVal('lgSRate') }, 'Settings saved.'); return false; }
+// Downloads a backup file of the whole ledger; true when it worked.
 async function lgDownloadBackup(){
   try{
     const b = await apiGet('/ledger/backup');
     const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `bitbase-ledger-backup-${lgToday()}.json`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  }catch(err){ toast(err.message, true); }
+    return true;
+  }catch(err){ toast(err.message, true); return false; }
+}
+// Clear all ledger data: download a backup first, then clear (the server also keeps a copy).
+function lgClearAll(e){
+  e.preventDefault();
+  const pw = lgVal('lgClrPw'), d = lg.data;
+  if(lgVal('lgClrTxt').trim().toUpperCase() !== 'CLEAR'){ toast('Type CLEAR to confirm.', true); return false; }
+  if(!(d.payouts.length + d.expenses.length + d.moves.length)){ toast('The Ledger is already empty.'); return false; }
+  if(!window.confirm(`Clear ${d.payouts.length} payouts, ${d.expenses.length} expenses and ${d.moves.length} board entries? A backup file downloads first.`)) return false;
+  (async () => {
+    if(!(await lgDownloadBackup())){ toast('The backup could not be downloaded, so nothing was cleared.', true); return; }
+    const res = await lgSend('POST', '/ledger/clear', { password: pw }, 'Ledger cleared. The backup file is in your Downloads.');
+    if(res){ lg.newDay = null; delete state.ui.params.lgDay; render(); }
+  })();
+  return false;
 }
 function lgRestoreFile(ev){
   const f = ev.target.files[0]; if(!f) return;

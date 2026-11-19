@@ -359,6 +359,23 @@ module.exports = function registerLedger(app, d){
     res.json({ preview, restored: true });
   });
 
+  // Clear the ledger (payouts, expenses, board entries) to start fresh. Needs the ledger
+  // password again; the current data is saved to ledger_backups/before-clear-*.json first.
+  // The password, USD rate and members' usual rates stay.
+  app.post('/api/ledger/clear', guard, (req, res) => {
+    if(tooManyTries(req, res)) return;
+    if(!bcrypt.compareSync(String((req.body || {}).password || ''), L.settings.passwordHash)){ wrongTry(req); res.status(401).json({ error: 'Wrong ledger password.' }); return; }
+    const counts = { payouts: L.payouts.length, expenses: L.expenses.length, moves: L.moves.length };
+    try{
+      if(!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
+      fs.writeFileSync(path.join(BACKUP_DIR, `before-clear-${Date.now()}.json`), JSON.stringify(snapshot(true), null, 1));
+    }catch(e){ res.status(500).json({ error: 'Could not save a safety copy first, so nothing was cleared.' }); return; }
+    L.payouts = []; L.expenses = []; L.moves = [];
+    persist();
+    logAudit(req.user.displayName, `Ledger: cleared all ledger data (${counts.payouts} payouts, ${counts.expenses} expenses, ${counts.moves} board entries; a copy is kept on the server)`, '');
+    res.json({ cleared: counts });
+  });
+
   return { lockSession: token => unlocks.delete(token) };
 };
 module.exports.splitReceived = splitReceived;
