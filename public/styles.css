@@ -526,24 +526,64 @@ td[data-label=""] .btn + .btn{margin-left:4px;}
 .lg-pill.mv{background:var(--sky-pale);color:var(--sky-deep);border:1px solid var(--line);}
 .lg-split{background:var(--sky-pale);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px;font-size:13px;line-height:1.85;}
 .lg-split b{font-variant-numeric:tabular-nums;}
+.lg-dayhead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+.lg-days{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
+.lg-day{border:1.5px solid var(--line);background:var(--cloud);color:var(--ink);border-radius:12px;padding:8px 12px;cursor:pointer;text-align:left;font:inherit;line-height:1.3;}
+.lg-day b{display:block;font-size:13.5px;}
+.lg-day span{font-size:11.5px;color:var(--ink-soft);}
+.lg-day.on{border-color:var(--sky-deep);background:var(--sky-pale);box-shadow:0 0 0 2px var(--sky-soft) inset;}
+.lg-day .wait{color:#C9822C;font-weight:700;}
 #ledgerPrint{display:none;}
-/* Printing a ledger report (Save as PDF): only the report shows */
+/* Printing a ledger report (Save as PDF): only the report shows. Colours are forced so they print
+   even when "Background graphics" is off. */
 @media print{
+  @page{size:A4;margin:12mm 11mm 13mm;}
   body.ledger-printing > *:not(#ledgerPrint){display:none !important;}
-  body.ledger-printing{background:#fff;color:#000;}
-  body.ledger-printing #ledgerPrint{display:block;font-size:11.5px;color:#000;}
-  #ledgerPrint h1{font-size:18px;margin-bottom:2px;}
-  #ledgerPrint h2{font-size:13.5px;margin:16px 0 6px;}
-  #ledgerPrint .lgp-meta{color:#555;font-size:11px;margin-bottom:10px;}
-  #ledgerPrint table{width:100%;border-collapse:collapse;margin-bottom:8px;}
-  #ledgerPrint th,#ledgerPrint td{border:1px solid #bbb;padding:4px 6px;font-size:10.5px;color:#000;white-space:normal;text-transform:none;letter-spacing:0;}
-  #ledgerPrint th{background:#eef3f8;}
-  #ledgerPrint td.n{text-align:right;}
-  #ledgerPrint tr:hover td{background:none;}
-  #ledgerPrint .tot td{font-weight:700;background:#f6f6f6;}
-  #ledgerPrint .lgp-boxes{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 4px;}
-  #ledgerPrint .lgp-box{border:1px solid #bbb;border-radius:6px;padding:6px 9px;min-width:130px;}
-  #ledgerPrint .lgp-box .l{font-size:10px;color:#555;}
-  #ledgerPrint .lgp-box .v{font-size:13px;font-weight:700;}
+  body.ledger-printing{background:#fff !important;color:#22303F;margin:0 !important;padding:0 !important;}
+  body.ledger-printing #ledgerPrint{display:block;}
+  #ledgerPrint, #ledgerPrint *{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box;}
+  #ledgerPrint .lgp{font-family:"Inter",system-ui,sans-serif;font-size:10px;line-height:1.4;color:#22303F;}
+  #ledgerPrint .lgp-top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:13px 16px;border-radius:10px;background:#2B6CB0;color:#fff;}
+  #ledgerPrint .lgp-brand{display:flex;align-items:center;gap:10px;}
+  #ledgerPrint .lgp-logo{width:32px;height:32px;border-radius:9px;background:#fff;color:#2B6CB0;font:700 17px "Outfit",sans-serif;display:flex;align-items:center;justify-content:center;}
+  #ledgerPrint .lgp-org{font:700 15px "Outfit",sans-serif;color:#fff;}
+  #ledgerPrint .lgp-tag{font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:#D6E7F7;}
+  #ledgerPrint .lgp-title{text-align:right;}
+  #ledgerPrint .lgp-title h1{font:700 17px "Outfit",sans-serif;margin:0;color:#fff;}
+  #ledgerPrint .lgp-title div{font-size:10.5px;color:#D6E7F7;}
+  #ledgerPrint .lgp-meta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;color:#6B7A8C;font-size:9px;margin:7px 2px 12px;}
+  #ledgerPrint .lgp-meta b{color:#22303F;}
+  #ledgerPrint .lgp-kpis{display:flex;gap:7px;margin-bottom:7px;}
+  #ledgerPrint .lgp-kpi{flex:1 1 0;min-width:0;border:1px solid #E1EAF3;border-radius:8px;padding:7px 10px;background:#F6FAFD;}
+  #ledgerPrint .lgp-kpi .l{font-size:8px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6B7A8C;}
+  #ledgerPrint .lgp-kpi .v{font:700 14px "Outfit",sans-serif;margin-top:2px;white-space:nowrap;color:#22303F;}
+  #ledgerPrint .lgp-kpi .s{font-size:8.5px;color:#6B7A8C;}
+  #ledgerPrint .lgp-kpi.gw{border-left:4px solid #2B6CB0;}
+  #ledgerPrint .lgp-kpi.cf{border-left:4px solid #3E8A6D;}
+  #ledgerPrint .lgp-kpi.ex{border-left:4px solid #C1523F;}
+  #ledgerPrint h2{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font:700 12px "Outfit",sans-serif;color:#2B6CB0;margin:15px 0 6px;padding-bottom:4px;border-bottom:2px solid #E1EAF3;break-after:avoid;}
+  #ledgerPrint h2 small{font:500 8.5px "Inter",sans-serif;color:#6B7A8C;}
+  #ledgerPrint table{width:100%;border-collapse:collapse;font-size:9.5px;}
+  #ledgerPrint thead{display:table-header-group;}
+  #ledgerPrint th{background:#EEF4FA;color:#2B6CB0;font-size:7.8px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;text-align:left;padding:6px 7px;border:0;border-bottom:1.5px solid #CFE0F1;white-space:nowrap;}
+  #ledgerPrint td{padding:5px 7px;border:0;border-bottom:1px solid #EDF2F7;vertical-align:top;white-space:normal;color:#22303F;background:#fff;}
+  #ledgerPrint tbody tr:nth-child(even) td{background:#FAFCFE;}
+  #ledgerPrint tr:hover td{background:inherit;}
+  #ledgerPrint th.n,#ledgerPrint td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
+  #ledgerPrint th.c,#ledgerPrint td.c{text-align:center;width:22px;color:#9AAAB8;}
+  #ledgerPrint td .sm{display:block;font-size:8px;font-weight:400;color:#6B7A8C;}
+  #ledgerPrint td .dash{color:#B7C3CF;}
+  #ledgerPrint td.neg{color:#B04532;}
+  #ledgerPrint td.pos{color:#2F7A5D;}
+  #ledgerPrint tr.tot td{font-weight:700;background:#EEF4FA !important;border-top:1.5px solid #CFE0F1;border-bottom:0;}
+  #ledgerPrint .pill{display:inline-block;padding:1px 7px;border-radius:99px;font-size:8px;font-weight:700;}
+  #ledgerPrint .pill.wait{background:#FBF1DC;color:#9A6417;}
+  #ledgerPrint .pill.ok{background:#E7F4EE;color:#2F7A5D;}
+  #ledgerPrint .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:0;}
+  #ledgerPrint .dot.gateway{background:#2B6CB0;}
+  #ledgerPrint .dot.account{background:#9AAAB8;}
+  #ledgerPrint .dot.community{background:#3E8A6D;}
+  #ledgerPrint .lgp-empty{color:#6B7A8C;font-style:italic;padding:4px 2px 2px;}
+  #ledgerPrint .lgp-foot{margin-top:16px;padding-top:7px;border-top:1px solid #E1EAF3;color:#9AAAB8;font-size:8px;text-align:center;}
   #ledgerPrint tr{break-inside:avoid;}
 }

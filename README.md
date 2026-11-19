@@ -67,8 +67,11 @@ bitbase-server/
   **15%** or **5%**: at 20% the PKR received is split 15 parts Payment Gateway +
   5 parts Community Funds; 15% all goes to the Payment Gateway, 5% all to
   Community Funds. A board adds / sends / removes money between the Payment
-  Gateway, Account and Community Funds; expenses come out of the pool picked.
-  Reports print to PDF (full summary, monthly, per member, expenses, one payout).
+  Gateway, Account and Community Funds; expenses come out of Community Funds
+  (or the Payment Gateway). "Clear (sent)" on the board records that the
+  Payment Gateway money was sent to the payment gateway. Payouts are grouped by
+  X payout day (X pays every 2 weeks): pick a day, add each member to it.
+  Reports print to PDF: one payout day, or the full summary.
   - Admins only, behind its **own ledger password** (created the first time it's
     opened, confirmed with the admin login; changed with the current one; reset
     with the admin login). It locks after 10 minutes without use and on logout.
