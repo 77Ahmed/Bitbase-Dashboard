@@ -334,7 +334,7 @@ app.post('/api/login', (req, res) => {
 
 app.post('/api/logout', (req, res) => {
   const token = req.cookies && req.cookies.bb_session;
-  if(token) destroySession(token);
+  if(token){ destroySession(token); ledger.lockSession(token); }
   res.clearCookie('bb_session');
   res.json({ ok: true });
 });
@@ -747,6 +747,9 @@ app.put('/api/settings', requireAuth, requireAdmin, (req, res) => {
   logAudit(req.user.displayName, 'Updated community settings', '');
   res.json({ settings });
 });
+
+/* ===== Ledger (admin only, its own password) — see ledger-server.js ===== */
+const ledger = require('./ledger-server')(app, { DATA_DIR, readCsv, writeCsvAtomic, requireAuth, requireAdmin, getUser, allMembers, logAudit, uid });
 
 /* ===== Static frontend ===== */
 app.use(express.static(path.join(__dirname, 'public')));
