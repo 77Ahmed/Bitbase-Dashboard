@@ -9,6 +9,8 @@ async function tryAsync(label, fn){
 }
 
 function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
+// Polls until check() is true (up to ms), for steps whose speed depends on the PC (bcrypt).
+async function waitFor(check, ms){ const end = Date.now() + (ms || 5000); while(Date.now() < end){ if(check()) return; await wait(100); } }
 
 async function freshWindow(){
   const html = await (await fetch(BASE + '/')).text();
@@ -1022,7 +1024,7 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     w.document.getElementById('lgAcc').value = 'admin123456';
     w.document.getElementById('lgNew').value = 'ledger-pass-1';
     w.document.getElementById('lgNew2').value = 'ledger-pass-1';
-    submit(w, 'lgAcc'); await wait(600);
+    submit(w, 'lgAcc'); await waitFor(() => html(w).includes('Latest money movements'));
     if(!html(w).includes('Latest money movements')) throw new Error('ledger should open after creating the password: ' + html(w).slice(0, 200));
   });
 
@@ -1031,12 +1033,20 @@ function submit(w, fieldId){ w.document.getElementById(fieldId).closest('form').
     if(!html(w).includes('The Ledger is locked')) throw new Error('expected the locked screen');
     await expectFail(() => w.apiSend('POST', '/ledger/unlock', { password: 'admin123456' }), 'Wrong ledger password', 'login password');
     w.document.getElementById('lgPw').value = 'ledger-pass-1';
-    submit(w, 'lgPw'); await wait(600);
+    submit(w, 'lgPw'); await waitFor(() => html(w).includes('Latest money movements'));
     if(!html(w).includes('Latest money movements')) throw new Error('the right ledger password should open it');
   });
 
   await tryAsync('Ledger: $115 payout, Rs 6,530 at 20% -> Rs 4,897.50 gateway + Rs 1,632.50 community; 15% and 5% too', async () => {
     const tanvir = w.getUserByUsername('tanvir').id, lisa = w.getUserByUsername('lisa').id, hamza = w.getUserByUsername('hamza').id;
+    // Only monetized members get payouts: freshmember isn't, so it's refused and not listed.
+    const fresh = w.getUserByUsername('freshmember').id;
+    await expectFail(() => w.apiSend('POST', '/ledger/payouts', { memberId: fresh, usd: 10, date: w.dateStr(0) }), 'Only monetized', 'non-monetized payout');
+    // Ticking "Monetized" on the website puts them in the Ledger the next time it's opened.
+    await w.apiSend('PUT', '/users/' + lisa, { monetized: true });
+    await w.apiSend('PUT', '/users/' + hamza, { monetized: true });
+    w.goto('dashboard'); w.goto('ledger', { lgTab: 'members' }); await wait(800);
+    if(html(w).includes('Fresh Member') || !html(w).includes('Lisa Novak') || !html(w).includes('Tanvir Shah')) throw new Error('Members tab should list only monetized members, freshly loaded');
     const { payout } = await w.apiSend('POST', '/ledger/payouts', { memberId: tanvir, usd: 115, date: w.dateStr(0) });
     if(payout.status !== 'pending') throw new Error('a new payout should be waiting');
     await expectFail(() => w.apiSend('POST', `/ledger/payouts/${payout.id}/receive`, { receivedPkr: 6530, rate: 10, receivedDate: w.dateStr(0) }), '20%, 15% or 5%', 'rate 10');

@@ -28,6 +28,8 @@ function lgInRange(iso, from, to){ return (!from || iso >= from) && (!to || iso 
 function lgVal(id){ const el = document.getElementById(id); return el ? el.value : ''; }
 function lgMember(id){ return ((lg.data && lg.data.members) || []).find(m => m.id === id); }
 function lgMemberName(p){ const m = lgMember(p.memberId); return m ? m.name : (p.memberName || '(removed member)'); }
+// The Ledger only offers monetized members (anyone with an older payout still shows in history/reports).
+function lgMonetized(){ return ((lg.data && lg.data.members) || []).filter(m => m.monetized); }
 
 /* ---------------- the calculations (same rules as the server) ---------------- */
 function lgSplit(receivedPkr, rate){
@@ -109,10 +111,14 @@ async function lgSend(method, path, body, okMsg){
     if(okMsg) toast(okMsg);
     return res;
   }catch(err){
-    if(err.data && err.data.error === 'ledger_locked'){ closeModal(); lg.status = { unlocked: false, hasPassword: true }; lg.data = null; render(); toast('The Ledger locked itself after 30 minutes. Enter the ledger password again.', true); }
+    if(err.data && err.data.error === 'ledger_locked'){ closeModal(); lg.status = { unlocked: false, hasPassword: true }; lg.data = null; render(); toast('The Ledger locked itself after 10 minutes without use. Enter the ledger password again.', true); }
     else toast(err.message, true);
     return null;
   }
+}
+// Called by goto() when the Ledger page is opened: reload it (fresh member list, monetized flags).
+function lgOnOpen(){
+  if(lg.status && lg.status.unlocked && lg.data){ lg.status = null; lg.data = null; }
 }
 async function lgLock(){
   try{ await apiSend('POST', '/ledger/lock'); }catch(e){}
@@ -158,7 +164,7 @@ function lgLockScreen(){
       <div class="field"><label>Type it again</label><input id="lgNew2" type="password" autocomplete="new-password" minlength="6" required></div>
       <button class="btn btn-primary">Reset and open</button></form>
       <div style="text-align:center;margin-top:12px;"><a class="muted" style="cursor:pointer;font-size:13px;" onclick="lg.lockForm='unlock'; render();">← Back</a></div>`);
-  return box('The Ledger is locked', 'Enter the ledger password to open it. It locks again after 30 minutes without use.',
+  return box('The Ledger is locked', 'Enter the ledger password to open it. It locks again after 10 minutes without use.',
     `<form onsubmit="return lgUnlock(event)">
       <div class="field"><label>Ledger password</label><input id="lgPw" type="password" autocomplete="current-password" required autofocus></div>
       <button class="btn btn-primary">Open the Ledger</button></form>
@@ -278,8 +284,8 @@ function lgPayouts(){
       </tbody></table></div>` : `<div class="empty">No payouts here yet.</div>`}</div>`;
 }
 function lgOpenPayout(id){
-  const members = lg.data.members.filter(m => m.status === 'active' || (id && lg.data.payouts.find(p => p.id === id).memberId === m.id));
-  if(!members.length){ toast('Add members on the Members page first.', true); return; }
+  const members = lg.data.members.filter(m => (m.monetized && m.status === 'active') || (id && lg.data.payouts.find(p => p.id === id).memberId === m.id));
+  if(!members.length){ toast('No monetized members yet. Tick "Monetized" on a member in the Members page first.', true); return; }
   const p = id ? lg.data.payouts.find(x => x.id === id) : { memberId: members[0].id, date: lgToday(), usd: '', note: '' };
   openModal(`<div class="modal"><h2>${id ? 'Edit' : 'Add'} payout</h2>
     <form onsubmit="return lgSavePayout(event,${id ? `'${id}'` : 'null'})">
@@ -345,16 +351,16 @@ function lgSaveReceive(e, id){
 
 /* ---------------- Members (from the site's member list) ---------------- */
 function lgMembers(){
-  const rows = lg.data.members;
+  const rows = lgMonetized();
   return `<div class="card">
-      <div class="muted" style="font-size:12.5px;margin-bottom:12px;">Members come from the site's Members page. "Usually gives" is picked when you mark their payout received (and it's remembered from the last payout); change it here any time.</div>
+      <div class="muted" style="font-size:12.5px;margin-bottom:12px;">Only <b>monetized</b> members are shown: tick "Monetized" on the site's Members page to add someone. "Usually gives" is picked when you mark their payout received (and it's remembered from the last payout); change it here any time.</div>
       ${rows.length ? `<div class="scrollx"><table class="to-cards"><thead><tr><th>Member</th><th>Usually gives</th><th>Payouts</th><th>X payouts</th><th>Received</th></tr></thead><tbody>
       ${rows.map(m => { const ps = lg.data.payouts.filter(p => p.memberId === m.id);
         return `<tr><td data-label="Member"><b>${escapeHtml(m.name)}</b> <span class="muted">${m.xUsername ? '@' + escapeHtml(m.xUsername) : ''}</span>${m.status !== 'active' ? ' <span class="badge inactive">inactive</span>' : ''}</td>
           <td data-label="Usually gives"><select class="select-sm" onchange="lgSend('PUT','/ledger/settings',{memberRates:{'${m.id}':this.value}}, 'Saved.')">${Object.keys(LG_RATES).sort((a, b) => b - a).map(r => `<option value="${r}" ${Number(m.rate) === Number(r) ? 'selected' : ''}>${r}%</option>`).join('')}</select></td>
           <td data-label="Payouts">${ps.length}</td><td data-label="X payouts">${lgUsd(ps.reduce((s, p) => s + p.usd, 0))}</td>
           <td data-label="Received">${lgPkr(ps.filter(p => p.status === 'received').reduce((s, p) => s + p.receivedPkr, 0))}</td></tr>`; }).join('')}
-      </tbody></table></div>` : `<div class="empty">No members on the site yet.</div>`}
+      </tbody></table></div>` : `<div class="empty">No monetized members yet.</div>`}
     </div>`;
 }
 
@@ -402,7 +408,8 @@ function lgMonths(){
 }
 function lgReports(){
   const range = pfx => `<div class="field-row"><div class="field"><label>From</label><input id="${pfx}From" type="date"></div><div class="field"><label>To</label><input id="${pfx}To" type="date"></div></div>`;
-  const members = lg.data.members;
+  // Monetized members, plus anyone who already has a payout (so old statements can still be printed).
+  const members = lg.data.members.filter(m => m.monetized || lg.data.payouts.some(p => p.memberId === m.id));
   return `<div class="muted" style="font-size:12.5px;margin-bottom:12px;">Each button opens the print window: choose <b>Save as PDF</b> as the printer. Empty dates = everything.</div>
     <div class="grid-stats" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr));">
       <div class="card" style="margin:0;"><h3>📘 Full summary</h3><div class="muted" style="font-size:12px;margin-bottom:10px;">Members who got a payout, money received, what went to the Payment Gateway and Community Funds, expenses and balances.</div>
